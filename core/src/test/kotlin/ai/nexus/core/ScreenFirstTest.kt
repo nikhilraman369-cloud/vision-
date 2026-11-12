@@ -78,7 +78,7 @@ class ScreenFirstTest {
         scope.launch { nexus.events.collect { if (it is NexusEvent.Reply) out += it.text; if (it is NexusEvent.Ack) out += "ack:" + it.text } }
         return nexus to out
     }
-    private fun run(n: Nexus, s: String) = runBlocking { withTimeout(10_000) { n.process(s) } }
+    private fun run(n: Nexus, s: String) = runBlocking { withTimeout(10_000) { n.process(s) }; kotlinx.coroutines.delay(150) }
 
     @Test fun opensGroupVisibleOnScreenInsteadOfAnApp() {
         val phone = ScreenPhone().apply { foreground = "com.whatsapp" }
@@ -130,11 +130,11 @@ class ScreenFirstTest {
         val (nexus, _) = setup(phone)
         var calls = 0
         nexus.phoneBrain = PhoneBrain(TextGenerator { calls++; "tap Believer" })
-        run(nexus, "imagine dragons wali cheez lagado yaar")
+        run(nexus, "kuch imagine dragons type ka mood hai")
         assertEquals("Believer", phone.playing)
         assertEquals(1, calls)
         phone.playing = null
-        run(nexus, "imagine dragons wali cheez lagado yaar")
+        run(nexus, "kuch imagine dragons type ka mood hai")
         assertEquals("Believer", phone.playing)
         assertEquals(1, calls, "second time must come from the learned cache, not the model")
         assertTrue(nexus.memory.items.any { it.kind == MemoryKind.LEARNED })

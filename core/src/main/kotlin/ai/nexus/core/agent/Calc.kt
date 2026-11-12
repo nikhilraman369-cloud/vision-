@@ -14,6 +14,8 @@ object Calc {
         return runCatching { Parser(e).parse() }.getOrNull()?.takeIf { it.isFinite() }
     }
 
+    fun looksLikeMath(s: String): Boolean = evaluate(s.replace(Regex("^(?:what(?:'s| is)|calculate)\\s+", RegexOption.IGNORE_CASE), "").trimEnd('?')) != null
+
     fun format(v: Double): String =
         if (v == Math.rint(v) && kotlin.math.abs(v) < 1e15) v.toLong().toString()
         else "%.4f".format(v).trimEnd('0').trimEnd('.')

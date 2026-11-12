@@ -73,8 +73,8 @@ class PhoneBrainManager(private val context: Context, private val scope: Corouti
         val path = File(dir, m.fileName).absolutePath
         val t0 = System.currentTimeMillis()
         llm?.close(); llm = null
-        // Try the GPU first (much faster prompt reading), fall back to the CPU.
-        val created = listOf(LlmInference.Backend.GPU, LlmInference.Backend.CPU).firstNotNullOfOrNull { backend ->
+        // CPU is the most reliable for these quantised models; GPU only as a fallback.
+        val created = listOf(LlmInference.Backend.CPU, LlmInference.Backend.GPU).firstNotNullOfOrNull { backend ->
             runCatching {
                 LlmInference.createFromOptions(
                     context,
@@ -88,6 +88,11 @@ class PhoneBrainManager(private val context: Context, private val scope: Corouti
         }
         if (created == null) { _state.value = State.Error("This phone couldn't load the model."); return }
         llm = created
+        // Warm-up run so the first real command doesn't pay for initialisation.
+        runCatching {
+            val sess = LlmInferenceSession.createFromOptions(created, LlmInferenceSession.LlmInferenceSessionOptions.builder().setTopK(1).setTemperature(0f).build())
+            sess.addQueryChunk("<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n"); sess.generateResponse(); sess.close()
+        }
         _state.value = State.Ready(m, System.currentTimeMillis() - t0)
     }
 
@@ -155,6 +160,15 @@ class PhoneBrainManager(private val context: Context, private val scope: Corouti
                 _state.value = State.Error((e.message ?: "Download failed") + ". Check your internet and try again — it resumes where it stopped.")
             }
         }
+    }
+
+    /** For the Settings "Test" button: what the brain makes of a sample command, and how long it took. */
+    suspend fun test(sample: String): String {
+        if (!isReady) return "The phone brain isn't loaded yet."
+        val t0 = System.currentTimeMillis()
+        val out = runCatching { brain.translate(sample, null) }.getOrElse { return "Error: ${it.message}" }
+        val ms = System.currentTimeMillis() - t0
+        return "\"$sample\" → " + (out?.joinToString(", ") { ai.nexus.core.nlu.CommandDsl.toLine(it) ?: it.toString() } ?: "(nothing)") + "  ·  $ms ms"
     }
 
     fun setCustomUrl(url: String) { prefs.edit().putString("custom_url", url.trim()).apply() }

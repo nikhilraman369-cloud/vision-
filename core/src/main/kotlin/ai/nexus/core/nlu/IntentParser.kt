@@ -54,7 +54,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         // action mixed with reasoning about its result → let the agent plan it.
         val hasPhoneAction = steps.any { it.command !is Command.Chat && it.command !is Command.Agentic }
         val hasChat = steps.any { it.command is Command.Chat }
-        if (steps.size > 1 && hasPhoneAction && (hasChat || REASONING.containsMatchIn(normalized))) {
+        if (steps.size > 1 && hasPhoneAction && hasChat && REASONING.containsMatchIn(normalized)) {
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.Agentic(normalized), normalized, 0.4)))
         }
         return ParsedRequest(utterance, normalized, steps)
@@ -91,7 +91,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
 
     // ---------------------------------------------------------------- clauses
 
-    fun parseClause(c: String, appContext: String? = null): List<Command> {
+    fun parseClause(c: String, appContext: String? = null, depth: Int = 0): List<Command> {
         controlOnly(c)?.let { return listOf(it) }
 
         // Corrections: "open the second result instead", "no, the other one"
@@ -114,6 +114,11 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
 
         // Bare app name: "Instagram"
         if (isKnownApp(c)) return listOf(Command.OpenApp(c))
+        // Hinglish word order: "insta pe reels dikha" → "show reels on instagram".
+        if (depth == 0) Canonicalizer.toEnglish(c)?.takeIf { !it.equals(c, true) }?.let { en ->
+            val r = parseClause(en, appContext, depth + 1)
+            if (r.none { it is Command.Agentic || it is Command.Chat }) return r
+        }
         return listOf(fallback(c))
     }
 

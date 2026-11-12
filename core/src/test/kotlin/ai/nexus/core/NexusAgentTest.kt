@@ -26,7 +26,7 @@ class NexusAgentTest {
         return Triple(phone, nexus, replies)
     }
 
-    private fun run(n: Nexus, s: String) = runBlocking { withTimeout(10_000) { n.process(s) } }
+    private fun run(n: Nexus, s: String) = runBlocking { withTimeout(10_000) { n.process(s) }; kotlinx.coroutines.delay(150) }
 
     @Test fun instagramReelWorkflowEndToEnd() {
         val (phone, nexus, replies) = setup()

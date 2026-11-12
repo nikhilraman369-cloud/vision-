@@ -71,18 +71,44 @@ class YouTubeSkill : AppSkill {
         return t.contains("views") || t.contains("view") || Regex("\\b\\d{1,2}:\\d{2}\\b").containsMatchIn(t) || t.contains("watching")
     }
 
+    private val videoDesc = Regex("\\b(?:views?|minutes?|seconds?|hours?|play video|watching|play short|\\d{1,2}:\\d{2})\\b", RegexOption.IGNORE_CASE)
+
+    /** Video / Short cards on screen, top to bottom, ads removed. */
+    fun cards(s: ScreenSnapshot, shorts: Boolean): List<UiNode> {
+        val h = s.screenHeight
+        // YouTube describes each card in one contentDescription ("Title - 12 minutes - Channel - 1M views - play video").
+        val described = s.nodes.filter { n ->
+            val d = n.contentDescription ?: return@filter false
+            n.bounds.area > 0 && n.bounds.centerY > h * 0.08 && videoDesc.containsMatchIn(d) &&
+                !d.contains("sponsored", true) && !d.startsWith("Ad ", true) &&
+                (if (shorts) d.contains("short", true) || n.bounds.height > n.bounds.width else !d.contains("play short", true))
+        }
+        val outer = described.filter { a -> described.none { b -> b.id != a.id && b.bounds.contains(a.bounds) && b.bounds != a.bounds } }
+        if (outer.isNotEmpty()) return outer.sortedWith(compareBy({ it.bounds.top / 40 }, { it.bounds.left }))
+        return ElementFinder(s).listItems().filter { if (shorts) it.allText().contains("short", true) || it.bounds.height > it.bounds.width else isVideoCard(it) }
+    }
+
     private suspend fun openResult(cmd: Command.OpenResult, s: ScreenSnapshot, kind: ScreenKind, env: SkillEnv): Outcome? {
-        if (kind != ScreenKind.YT_RESULTS && kind != ScreenKind.YT_HOME && kind != ScreenKind.YT_SEARCH) return null
-        val f = ElementFinder(s)
+        if (kind == ScreenKind.YT_WATCH && cmd.kind == null) return null
         val wantShort = cmd.kind?.startsWith("short") == true
-        val candidates = f.listItems().filter { if (wantShort) it.allText().contains("short", true) else isVideoCard(it) }
-        val target = (if (cmd.ordinal < 0) candidates.lastOrNull() else candidates.getOrNull(cmd.ordinal - 1))
-            ?: return Outcome.NeedsAgent("I couldn't find result number ${cmd.ordinal}.")
-        env.ctx.currentItem = "video: " + target.allText().take(80)
-        val after = env.ops.tap(target, s) ?: return Outcome.Failed("The video didn't open.")
-        val opened = env.ops.waitFor(5000) { ops -> env.ops.kind(ops) in setOf(ScreenKind.YT_WATCH, ScreenKind.YT_SHORTS) } ?: after
-        return if (env.ops.kind(opened) in setOf(ScreenKind.YT_WATCH, ScreenKind.YT_SHORTS)) Outcome.Success()
-        else Outcome.Uncertain("I tapped the video, but I'm not sure the player opened.")
+        var snap = s
+        var list = cards(snap, wantShort)
+        // Not enough on screen yet (e.g. "the 5th video")? Scroll a little and look again.
+        var tries = 0
+        while ((if (cmd.ordinal < 0) list.isEmpty() else list.size < cmd.ordinal) && tries < 3) {
+            env.ops.scrollAndWait(ai.nexus.core.device.Direction.DOWN)
+            snap = env.ops.current() ?: break
+            list = (list + cards(snap, wantShort)).distinctBy { it.contentDescription ?: it.allText() }
+            tries++
+        }
+        val target = (if (cmd.ordinal < 0) list.lastOrNull() else list.getOrNull(cmd.ordinal - 1))
+            ?: return Outcome.NeedsAgent("I couldn't find ${if (wantShort) "Short" else "video"} number ${cmd.ordinal}.")
+        val fresh = env.ops.current() ?: snap
+        val node = fresh.nodes.firstOrNull { it.contentDescription != null && it.contentDescription == target.contentDescription } ?: target
+        env.ctx.currentItem = "video: " + (target.contentDescription ?: target.allText()).take(80)
+        env.ops.tap(node, fresh) ?: return Outcome.Failed("The video didn't open.")
+        val opened = env.ops.waitFor(5000) { ops -> env.ops.kind(ops) in setOf(ScreenKind.YT_WATCH, ScreenKind.YT_SHORTS) || ops.fingerprint != fresh.fingerprint }
+        return if (opened != null) Outcome.Success() else Outcome.Uncertain("I tapped the video, but I'm not sure the player opened.")
     }
 
     private suspend fun openUpNext(s: ScreenSnapshot, env: SkillEnv): Outcome? {

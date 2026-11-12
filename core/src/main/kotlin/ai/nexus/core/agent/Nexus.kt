@@ -129,7 +129,7 @@ class Nexus(
             // User-defined shortcut: "good night" → "turn off wifi and set brightness to 10".
             val norm = TextNormalizer.normalize(text)
             val key = Fuzzy.normalize(TextNormalizer.stripFillers(norm))
-            val expanded = memory.shortcut(norm)
+            val expanded = memory.shortcut(norm) ?: memory.shortcut(key)
             var request = if (expanded != null) parser.parse(expanded) else parsed
             if (request.steps.isEmpty()) return@withLock
 
@@ -140,27 +140,38 @@ class Nexus(
                 return@withLock
             }
 
-            // Rules didn't understand: a phrase learned before (instant), else the phone brain.
-            var learnAs: String? = null
+            // Only the parts the rules didn't understand get help: a phrase learned
+            // before (instant), else the phone brain — never the whole request.
+            val learnPairs = ArrayList<Pair<String, List<Command>>>()
             val cloudReady = brain != null && memory.settings.useCloudAi
-            val unclear = request.needsLlm || (request.isChat && !cloudReady && !OfflineChat.handles(text))
-            if (unclear) {
-                val learned = memory.lookup(MemoryKind.LEARNED, key)?.let { CommandDsl.parse(it) }?.takeIf { it.isNotEmpty() }
-                if (learned != null) {
-                    request = ai.nexus.core.nlu.ParsedRequest(text, norm, learned.map { ParsedStep(it, norm, 0.95) })
-                } else {
-                    val pb = phoneBrain
-                    if (pb != null && memory.settings.usePhoneBrain && !(request.isChat && cloudReady)) {
+            fun unclearStep(st: ParsedStep) = st.command is Command.Agentic || st.confidence < 0.55 ||
+                (st.command is Command.Chat && !cloudReady && !OfflineChat.handles(st.source) && !Calc.looksLikeMath(st.source))
+            if (request.steps.any(::unclearStep)) {
+                val pb = phoneBrain?.takeIf { memory.settings.usePhoneBrain }
+                val newSteps = ArrayList<ParsedStep>()
+                for (st in request.steps) {
+                    if (!unclearStep(st)) { newSteps += st; continue }
+                    val clauseKey = Fuzzy.normalize(st.source)
+                    val learned = (memory.lookup(MemoryKind.LEARNED, clauseKey) ?: memory.lookup(MemoryKind.LEARNED, key))
+                        ?.let { CommandDsl.parse(it) }?.takeIf { it.isNotEmpty() }
+                    if (learned != null) { learned.forEach { newSteps += ParsedStep(it, st.source, 0.95) }; continue }
+                    val isQuestion = st.command is Command.Chat && cloudReady
+                    if (pb != null && !isQuestion) {
                         setState(AgentState.THINKING)
-                        val translated = runCatching { pb.translate(norm, ops.screen()) }.getOrNull()
-                            ?.filterNot { it is Command.Chat && cloudReady }
-                        if (!translated.isNullOrEmpty() && translated.any { it !is Command.Chat }) {
-                            request = ai.nexus.core.nlu.ParsedRequest(text, norm, translated.map { ParsedStep(it, norm, 0.8) })
-                            learnAs = key
+                        val translated = kotlinx.coroutines.withTimeoutOrNull(PHONE_BRAIN_TIMEOUT_MS) {
+                            runCatching { pb.translate(st.source, ops.screen()) }.getOrNull()
+                        }?.filter { it !is Command.Chat && it !is Command.Agentic }
+                        if (!translated.isNullOrEmpty()) {
+                            translated.forEach { newSteps += ParsedStep(it, st.source, 0.8) }
+                            learnPairs += clauseKey to translated
+                            continue
                         }
-                        setState(AgentState.IDLE)
                     }
+                    newSteps += st
                 }
+                setState(AgentState.IDLE)
+                request = ai.nexus.core.nlu.ParsedRequest(text, norm, newSteps)
+                if (request.isChat) { runJob { chat(text) }; return@withLock }
             }
 
             if (request.steps.size == 1 && request.steps[0].command == Command.Repeat) {
@@ -178,9 +189,7 @@ class Nexus(
             runJob {
                 val ok = runSteps(finalSteps)
                 // Remember what a rough phrase meant, so next time it's instant.
-                if (ok && learnAs != null && learnAs.length > 2) {
-                    memory.remember(MemoryKind.LEARNED, learnAs, CommandDsl.toLines(finalSteps.map { it.command }))
-                }
+                if (ok) for ((k, cmds) in learnPairs) if (k.length > 2) memory.remember(MemoryKind.LEARNED, k, CommandDsl.toLines(cmds))
             }
         }
         job?.join()
@@ -892,7 +901,8 @@ class Nexus(
     /** Rules couldn't do it – let the LLM agent operate the phone toward the goal. */
     private suspend fun agentFallback(goal: String, cmd: Command, why: Outcome): Outcome {
         val b = brain?.takeIf { memory.settings.useCloudAi }
-        val pb = phoneBrain?.takeIf { memory.settings.usePhoneBrain }
+        // The small phone brain is not reliable enough to drive screens by itself – only Claude does that.
+        val pb: PhoneBrain? = null
         if (b == null && pb == null) {
             return if (cmd is Command.Agentic) Outcome.Failed("I didn't understand \"$goal\". Try saying it another way, or download the free phone brain in Settings.", blocking = false)
             else why
@@ -1000,6 +1010,7 @@ class Nexus(
 
     companion object {
         const val MAX_AGENT_STEPS = 20
+        const val PHONE_BRAIN_TIMEOUT_MS = 6000L
     }
 }
 

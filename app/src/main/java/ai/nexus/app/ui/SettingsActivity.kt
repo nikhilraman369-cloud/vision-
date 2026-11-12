@@ -67,6 +67,12 @@ class SettingsActivity : AppCompatActivity() {
             if (u.startsWith("http")) { bm.setCustomUrl(u); bm.download(ai.nexus.app.brain.BrainModel("custom", "Custom model", "?", u, "custom.task")) }
         }, Ui.matchWrap().apply { topMargin = dp(4) })
         toggle("Use the phone brain", s.usePhoneBrain) { v -> update { it.copy(usePhoneBrain = v) } }
+        val testOut = label("", 13f, Ui.MUTED)
+        box.addView(button("Test the phone brain", Ui.CARD) {
+            testOut.text = "Thinking…"
+            lifecycleScope.launch { testOut.text = bm.test("insta pe reels dikha aur pehli wali like kar") }
+        }, Ui.matchWrap().apply { topMargin = dp(6) })
+        box.addView(testOut)
         lifecycleScope.launch {
             bm.state.collect { st ->
                 brainStatus.text = when (st) {

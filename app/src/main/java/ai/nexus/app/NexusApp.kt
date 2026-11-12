@@ -68,7 +68,11 @@ class NexusApp : Application() {
                         voice.extendConversation()
                     }
                     is NexusEvent.StepStarted -> _status.value = if (e.total > 1) "Step ${e.index}/${e.total}: ${e.description}" else e.description
-                    is NexusEvent.StepFinished -> if (e.outcome !is Outcome.Success) add(ChatLine(false, "• ${e.description}: ${e.outcome.message}", detail = true))
+                    is NexusEvent.StepFinished -> if (e.outcome !is Outcome.Success) {
+                        add(ChatLine(false, "• ${e.description}: ${e.outcome.message}", detail = true))
+                        // Keep what the screen looked like when something went wrong, for "Copy screen info".
+                        runCatching { device.snapshot() }.getOrNull()?.takeIf { it.packageName != packageName }?.let { lastAppScreen = it.toPromptText(150) }
+                    }
                     is NexusEvent.StateChanged -> _status.value = when (e.state) {
                         AgentState.IDLE -> "Ready"
                         AgentState.THINKING -> "Thinking…"
@@ -85,7 +89,13 @@ class NexusApp : Application() {
         }
     }
 
+    /** Element list of the last non-NEXUS screen, for "Copy screen info". */
+    @Volatile var lastAppScreen: String? = null
+
     fun ask(text: String) {
+        if (!text.equals("watch me", true)) scope.launch {
+            runCatching { device.snapshot() }.getOrNull()?.takeIf { it.packageName != packageName }?.let { lastAppScreen = it.toPromptText(150) }
+        }
         add(ChatLine(true, text))
         nexus.submit(text)
     }

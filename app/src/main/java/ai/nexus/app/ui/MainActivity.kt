@@ -70,6 +70,15 @@ class MainActivity : AppCompatActivity() {
         header.addView(button("Settings", Ui.CARD) { startActivity(Intent(this, SettingsActivity::class.java)) })
         root.addView(header, Ui.matchWrap())
 
+        // Second row: routines, help, and a debug helper to send exactly what NEXUS sees.
+        val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(12), 0, dp(12), dp(4)) }
+        tools.addView(button("Routines", Ui.CARD) { startActivity(Intent(this, RoutinesActivity::class.java)) }.apply { textSize = 13f })
+        tools.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
+        tools.addView(button("What can I say?", Ui.CARD) { startActivity(Intent(this, HelpActivity::class.java)) }.apply { textSize = 13f })
+        tools.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
+        tools.addView(button("Copy screen info", Ui.CARD) { copyDebug() }.apply { textSize = 13f })
+        root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(tools) }, Ui.matchWrap())
+
         setupBox = vbox(12)
         root.addView(setupBox, Ui.matchWrap())
 
@@ -116,6 +125,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onResume() { super.onResume(); renderSetup(); refreshBubbleBtn() }
+
+    /**
+     * Copies what NEXUS saw on the last app screen plus the recent conversation,
+     * so you can paste it to whoever is helping you improve NEXUS.
+     */
+    private fun copyDebug() {
+        lifecycleScope.launch {
+            val screen = app.lastAppScreen ?: "(no app screen captured yet — use NEXUS in another app first)"
+            val chat = app.chat.value.takeLast(15).joinToString("\n") { (if (it.fromUser) "You: " else "NEXUS: ") + it.text }
+            val text = "NEXUS ${packageManager.getPackageInfo(packageName, 0).versionName} debug\n--- last screen ---\n$screen\n--- recent ---\n$chat"
+            getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(android.content.ClipData.newPlainText("NEXUS debug", text))
+            android.widget.Toast.makeText(this@MainActivity, "Copied. Paste it in your chat with Claude.", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 
     private fun send() {
         val t = input.text.toString().trim()

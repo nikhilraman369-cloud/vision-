@@ -181,8 +181,18 @@ class GenericSkill : AppSkill {
         return Outcome.Success()
     }
 
-    private suspend fun tap(cmd: Command.Tap, s: ScreenSnapshot, env: SkillEnv): Outcome {
-        val ranked = ElementFinder(s).rankByLabel(listOf(cmd.label)).filter { it.score >= 0.6 }
+    private suspend fun tap(cmd: Command.Tap, s0: ScreenSnapshot, env: SkillEnv): Outcome {
+        var s = s0
+        var ranked = ElementFinder(s).rankByLabel(listOf(cmd.label)).filter { it.score >= 0.6 }
+        // Not visible? Scroll down a few times looking for it.
+        var tries = 0
+        while (ranked.isEmpty() && tries < 3 && ElementFinder(s).largestScrollable() != null) {
+            val (moved, after) = env.ops.scrollAndWait(Direction.DOWN)
+            if (!moved || after == null) break
+            s = after
+            ranked = ElementFinder(s).rankByLabel(listOf(cmd.label)).filter { it.score >= 0.6 }
+            tries++
+        }
         val match = (cmd.ordinal?.let { ranked.getOrNull(it - 1) } ?: ranked.firstOrNull())
             ?: return Outcome.NeedsAgent("I don't see \"${cmd.label}\" on the screen.")
         val ok = if (cmd.long) env.device.longClick(match.node) || env.device.longPressAt(match.node.bounds.centerX, match.node.bounds.centerY)

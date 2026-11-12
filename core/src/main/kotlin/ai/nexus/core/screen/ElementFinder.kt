@@ -79,19 +79,27 @@ class ElementFinder(private val screen: ScreenSnapshot) {
     fun largestScrollable(): UiNode? = screen.nodes.filter { it.scrollable }.maxByOrNull { it.bounds.area }
 
     /**
-     * Result-like items of the main list in reading order, e.g. search
-     * results or a feed. Picks the largest scrollable container and returns
-     * its clickable, labelled descendants that look like content items.
+     * Result-like items on screen in reading order: search results, feed
+     * cards, chats, songs. Works even when apps don't mark cards as
+     * clickable (YouTube, Instagram): any wide, labelled block in the content
+     * area counts. Nested parts of the same card are merged.
      */
     fun listItems(minHeightPx: Int = 80): List<UiNode> {
-        val container = largestScrollable() ?: screen.root
-        val items = container.flatten()
-            .filter { it.id != container.id && it.clickable && it.bounds.height >= minHeightPx && it.bounds.area > 0 }
-            .filter { it.allText().isNotBlank() }
+        val h = screen.screenHeight; val w = screen.screenWidth
+        val top = h * 0.08; val bottom = h * 0.94
+        val minH = maxOf(minHeightPx, (h * 0.035).toInt())
+        val raw = screen.nodes.asSequence()
+            .filter { n -> !n.editable && n.visible && n.bounds.height >= minH && n.bounds.width >= w * 0.35 }
+            .filter { n -> n.bounds.centerY > top && n.bounds.centerY < bottom }
+            .filter { n -> n.bounds.area < w.toLong() * h * 0.7 }
+            .filter { n -> n.clickable || !n.contentDescription.isNullOrBlank() || screen.clickableTarget(n).let { t -> t.clickable && t.bounds.area < w.toLong() * h * 0.7 } }
+            .filter { n -> n.allText().isNotBlank() }
+            .map { n -> screen.clickableTarget(n).takeIf { t -> t.bounds.area < w.toLong() * h * 0.7 && t.bounds.height >= minH } ?: n }
+            .distinctBy { it.id }
             .toList()
-        // Keep outermost items only (a card and its inner title are the same result).
-        val outer = items.filter { item -> items.none { other -> other.id != item.id && other.bounds.contains(item.bounds) && other.bounds != item.bounds } }
-        return outer.sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+        // Keep outermost blocks only (a card and its inner title are one result).
+        val outer = raw.filter { item -> raw.none { o -> o.id != item.id && o.bounds.contains(item.bounds) && o.bounds != item.bounds } }
+        return outer.sortedWith(compareBy({ it.bounds.top / 40 }, { it.bounds.left }))
     }
 
     /** Ordinal is 1-based; negative counts from the end (-1 = last). */
