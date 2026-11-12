@@ -82,6 +82,17 @@ class GoldTest {
         assertEquals(setOf(0), p.liked)
     }
 
+    @Test fun sendGoesToTheChatOnScreenAndAppsOpenDirectly() {
+        val p = ScreenPhone().apply { foreground = "com.whatsapp" }; val (n, _) = setup(p)
+        run(n, "open the editorial group")          // NEXUS now remembers "Editorial Team"
+        p.waChat = "Family ❤️"                       // user switches chat by hand
+        run(n, "send I will be there in 10 minutes")
+        assertEquals("Family ❤️", p.waChat)
+        assertEquals(listOf("I will be there in 10 minutes"), p.aiSent)
+        run(n, "open Instagram")
+        assertTrue("launch:com.instagram.android" in p.log, p.log.toString())
+    }
+
     @Test fun brokenBrainDoesNotBreakNormalCommands() {
         val p = SocialPhone(); val (n, _) = setup(p)
         n.phoneBrain = PhoneBrain(TextGenerator { "garbage output !!" })

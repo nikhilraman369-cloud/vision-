@@ -35,8 +35,10 @@ class WhatsAppSkill : AppSkill {
         }
         val text = cmd.text ?: return Outcome.Asked("What should I say${name?.let { " to $it" } ?: ""}?")
         val s = ops.current()
+        // No name given and a chat is open: it's for this chat, whoever it is.
         val inRightChat = s != null && ops.kind(s) == ScreenKind.WA_CHAT &&
-            (name == null || chatTitle(s)?.let { Fuzzy.similarity(it, name) > 0.7 || it.contains(name, true) } == true)
+            (cmd.contact == null || name == null || chatTitle(s)?.let { Fuzzy.similarity(it, name) > 0.7 || it.contains(name, true) } == true)
+        if (inRightChat && cmd.contact == null) chatTitle(s!!)?.let { env.ctx.currentContactName = it }
 
         if (!inRightChat) {
             name ?: return Outcome.Asked("Who should I send it to?")
