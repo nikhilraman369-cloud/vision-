@@ -1,0 +1,3 @@
+-keep class com.anthropic.** { *; }
+-keep class com.fasterxml.jackson.** { *; }
+-dontwarn **

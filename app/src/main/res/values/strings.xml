@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NEXUS</string>
+    <string name="accessibility_label">NEXUS phone control</string>
+    <string name="accessibility_description">Lets NEXUS read what is on your screen and tap, type and scroll for you when you ask it to. NEXUS only acts on your requests. Screen contents are processed on the phone, and only sent to the cloud AI when you have enabled it in NEXUS settings.</string>
+</resources>
