@@ -71,6 +71,16 @@ sealed interface Command {
     /** "Do the same thing again". */
     data object Repeat : Command
     data class Shortcut(val name: String) : Command
+    data class SetAlarm(val hour: Int, val minute: Int, val label: String? = null) : Command
+    data class SetTimer(val seconds: Int, val label: String? = null) : Command
+    data class Note(val text: String) : Command
+    data object ReadNotes : Command
+    data object ClearNotes : Command
+    data class Calculate(val expression: String) : Command
+    /** "Watch me": start recording the user's own taps as a reusable routine. */
+    data object TeachStart : Command
+    data class TeachStop(val name: String?) : Command
+    data object HideBubble : Command
     /** A question or conversation – answered, not executed. */
     data class Chat(val text: String) : Command
     /** A phone task the rule-based parser could not break down – handed to the LLM agent. */

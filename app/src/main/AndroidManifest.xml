@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -43,6 +45,12 @@
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
         <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.SENDTO" />
             <data android:scheme="mailto" />
         </intent>
@@ -51,6 +59,7 @@
     <application
         android:name=".NexusApp"
         android:allowBackup="false"
+        android:largeHeap="true"
         android:icon="@drawable/ic_nexus"
         android:label="@string/app_name"
         android:roundIcon="@drawable/ic_nexus"

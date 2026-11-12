@@ -85,7 +85,7 @@ abstract class FakePhone : DeviceController, SystemActions {
     override suspend fun openUri(uri: String, packageName: String?): Boolean { log += "uri:$uri"; return onUri(uri, packageName) }
     override suspend fun installedApps() = listOf(
         InstalledApp("Instagram", "com.instagram.android"), InstalledApp("YouTube", "com.google.android.youtube"),
-        InstalledApp("WhatsApp", "com.whatsapp"), InstalledApp("Phone", "com.google.android.dialer"), InstalledApp("Spotify", "com.spotify.music"),
+        InstalledApp("WhatsApp", "com.whatsapp"), InstalledApp("Phone", "com.google.android.dialer"), InstalledApp("Spotify", "com.spotify.music"), InstalledApp("YT Music", "com.google.android.apps.youtube.music"),
     )
 
     // ---- SystemActions

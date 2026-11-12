@@ -26,6 +26,8 @@ class NexusNotificationListener : NotificationListenerService() {
         synchronized(store) {
             store.removeAll { it.first.key == sbn.key }
             store.addFirst(n to sbn.notification.contentIntent)
+            replyActions.remove(sbn.key)
+            sbn.notification.actions?.firstOrNull { a -> a.remoteInputs?.any { it.allowFreeFormInput } == true }?.let { replyActions[sbn.key] = it }
             while (store.size > 50) store.removeLast()
         }
     }
@@ -33,6 +35,16 @@ class NexusNotificationListener : NotificationListenerService() {
     companion object {
         @Volatile var connected = false
         private val store = ArrayDeque<Pair<PhoneNotification, PendingIntent?>>()
+
+        private val replyActions = HashMap<String, Notification.Action>()
+
+        /** The newest notification from [name] that has a reply button. */
+        fun replyTarget(name: String): Pair<PhoneNotification, Notification.Action>? = synchronized(store) {
+            val n = name.lowercase().trim()
+            store.map { it.first }.filter { replyActions.containsKey(it.key) }
+                .firstOrNull { p -> p.title.lowercase().let { t -> t == n || t.startsWith("$n ") || t.contains(n) || n.contains(t) && t.length > 2 } }
+                ?.let { it to replyActions.getValue(it.key) }
+        }
 
         fun recent(limit: Int): List<PhoneNotification> = synchronized(store) { store.take(limit).map { it.first } }
         fun intentFor(key: String): PendingIntent? = synchronized(store) { store.firstOrNull { it.first.key == key }?.second }

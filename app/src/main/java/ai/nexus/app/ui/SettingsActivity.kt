@@ -11,6 +11,8 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import ai.nexus.app.NexusApp
 import ai.nexus.app.ui.Ui.button
 import ai.nexus.app.ui.Ui.dp
@@ -45,7 +47,43 @@ class SettingsActivity : AppCompatActivity() {
         section("YOU")
         val name = field("Your name", s.name)
 
-        section("CLOUD AI (CLAUDE)")
+        section("PHONE BRAIN (FREE, OFFLINE)")
+        box.addView(label("A small AI that runs on your phone — free, private, no internet needed after download. It understands rough or unusual commands. Common commands never wait for it, and anything it works out once becomes instant next time.", 13f, Ui.MUTED))
+        val brainStatus = label("", 14f)
+        box.addView(brainStatus, Ui.matchWrap().apply { topMargin = dp(6) })
+        val bm = app.brainManager
+        for (m in ai.nexus.app.brain.PhoneBrainManager.MODELS) {
+            box.addView(button("Download ${m.title} (${m.sizeLabel})", Ui.CARD) { bm.download(m) }, Ui.matchWrap().apply { topMargin = dp(6) })
+        }
+        box.addView(label("Fast is recommended for speed. Use Wi-Fi; the download resumes if interrupted.", 12f, Ui.MUTED))
+        val rowB = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        rowB.addView(button("Cancel download", Ui.CARD) { bm.cancelDownload() })
+        rowB.addView(LinearLayout(this), LinearLayout.LayoutParams(dp(8), 1))
+        rowB.addView(button("Delete model", Ui.WARN) { bm.delete() })
+        box.addView(rowB, Ui.matchWrap().apply { topMargin = dp(6) })
+        val customUrl = field("Advanced: custom .task model URL (optional)", null)
+        box.addView(button("Download from custom URL", Ui.CARD) {
+            val u = customUrl.text.toString().trim()
+            if (u.startsWith("http")) { bm.setCustomUrl(u); bm.download(ai.nexus.app.brain.BrainModel("custom", "Custom model", "?", u, "custom.task")) }
+        }, Ui.matchWrap().apply { topMargin = dp(4) })
+        toggle("Use the phone brain", s.usePhoneBrain) { v -> update { it.copy(usePhoneBrain = v) } }
+        lifecycleScope.launch {
+            bm.state.collect { st ->
+                brainStatus.text = when (st) {
+                    ai.nexus.app.brain.PhoneBrainManager.State.NotDownloaded -> "Status: not downloaded"
+                    is ai.nexus.app.brain.PhoneBrainManager.State.Downloading -> "Downloading ${st.model.title}… ${st.percent}%"
+                    ai.nexus.app.brain.PhoneBrainManager.State.Loading -> "Loading into memory…"
+                    is ai.nexus.app.brain.PhoneBrainManager.State.Ready -> "✅ Ready: ${st.model.title} (loaded in ${st.loadMs / 1000.0}s" +
+                        (if (bm.lastLatencyMs > 0) ", last answer ${bm.lastLatencyMs} ms)" else ")")
+                    is ai.nexus.app.brain.PhoneBrainManager.State.Error -> "⚠ ${st.message}"
+                }
+            }
+        }
+
+        section("SPEED")
+        toggle("Quick confirmations (tick + vibration instead of saying \"Done\")", s.quietAcks) { v -> update { it.copy(quietAcks = v) } }
+
+        section("CLOUD AI (CLAUDE, OPTIONAL, PAID)")
         box.addView(label("Optional. Without a key NEXUS still runs phone commands offline. With it, NEXUS can chat, answer questions and handle apps it doesn't know. Get a key at console.anthropic.com.", 13f, Ui.MUTED))
         val key = field("Anthropic API key", app.apiKey, secret = true)
         val model = field("Model", app.model)

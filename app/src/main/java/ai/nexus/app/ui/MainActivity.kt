@@ -41,6 +41,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var setupBox: LinearLayout
     private lateinit var mic: TextView
     private lateinit var input: EditText
+    private lateinit var bubbleBtn: TextView
+
+    private fun refreshBubbleBtn() { bubbleBtn.text = if (OverlayService.running) "Hide bubble" else "Show bubble" }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +59,12 @@ class MainActivity : AppCompatActivity() {
             status = label("Ready", 13f, Ui.MUTED); addView(status)
         }
         header.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        bubbleBtn = button("Bubble", Ui.CARD) {
+            if (OverlayService.running) OverlayService.stop(this) else if (Settings.canDrawOverlays(this)) startBubble() else renderSetup()
+            bubbleBtn.postDelayed({ refreshBubbleBtn() }, 300)
+        }
+        header.addView(bubbleBtn)
+        header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
         header.addView(button("Memory", Ui.CARD) { startActivity(Intent(this, MemoryActivity::class.java)) })
         header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
         header.addView(button("Settings", Ui.CARD) { startActivity(Intent(this, SettingsActivity::class.java)) })
@@ -71,7 +80,7 @@ class MainActivity : AppCompatActivity() {
 
         // Suggestion chips
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), 0, dp(8), 0) }
-        listOf("Open Instagram and go to Reels", "What's on my screen?", "Read my notifications", "Turn on the flashlight", "YouTube pe filmmaking search karo")
+        listOf("Open Instagram and go to Reels", "What's on my screen?", "Read my notifications", "Timer 5 minutes", "Watch me", "YouTube pe filmmaking search karo")
             .forEach { s -> chips.addView(button(s, Ui.CARD) { app.ask(s) }.apply { textSize = 13f }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) }) }
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, Ui.matchWrap())
 
@@ -106,7 +115,7 @@ class MainActivity : AppCompatActivity() {
         if (intent?.action == Intent.ACTION_ASSIST && ensureMic()) app.voice.startListening()
     }
 
-    override fun onResume() { super.onResume(); renderSetup() }
+    override fun onResume() { super.onResume(); renderSetup(); refreshBubbleBtn() }
 
     private fun send() {
         val t = input.text.toString().trim()
@@ -158,7 +167,10 @@ class MainActivity : AppCompatActivity() {
                 val perms = if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO) else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
                 ActivityCompat.requestPermissions(this, perms, 3)
             },
-            Step("Cloud AI (optional)", "Claude API key for conversation and unfamiliar apps", app.apiKey != null) {
+            Step("Phone brain (free)", "Download once so NEXUS understands rough commands offline", app.brainManager.installedModel() != null) {
+                startActivity(Intent(this, SettingsActivity::class.java))
+            },
+            Step("Cloud AI (optional, paid)", "Claude API key for conversation and questions", app.apiKey != null || app.brainManager.installedModel() != null) {
                 startActivity(Intent(this, SettingsActivity::class.java))
             },
         )

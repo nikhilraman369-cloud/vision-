@@ -51,6 +51,30 @@ voice / text ─▶ TextNormalizer ─▶ CommandSplitter ─▶ IntentParser �
   never tapped twice blindly: if NEXUS can't confirm the new state it reports
   "uncertain" and carries on with the rest of the task.
 
+### New in 0.2
+
+* **Screen first.** NEXUS checks what's on screen before anything else:
+  "open the editorial group" in WhatsApp taps that group; "play Thunder" in
+  YT Music taps the song in your suggestions; "type do it later" / "send do it
+  later" types (and sends) in whatever chat app is open — Claude, ChatGPT,
+  Telegram, anything with a text box.
+* **Free phone brain.** Download a small AI model once (Settings → Phone
+  brain). It runs on the phone, offline and free, and only steps in when the
+  rules don't understand a rough command. Whatever it works out is
+  **learned** — the same phrase is instant next time.
+* **Watch me.** Say "watch me", do a task by hand, then "done, call it
+  morning". Say "morning" any time to replay it.
+* **Faster.** Shorter end-of-speech wait, on-device speech recognition, and a
+  tick + vibration instead of speaking "Done".
+* **Reply without opening apps.** "Message Ankit saying on my way" replies
+  straight from Ankit's notification when there is one.
+* **Alarms, timers, reminders, notes, calculator.** "Wake me up at 6:30",
+  "timer 10 minutes", "remind me to call mom at 6 pm", "note buy milk",
+  "what's 15% of 2400".
+* **Bubble close button.** Tap the red ✕ on the bubble, drag it to the bottom
+  to close, or say "hide the bubble". The app's header has a Show/Hide bubble
+  button too.
+
 ### Features in this version
 
 * **Understanding**: dozens of phrasings per action; English, Hindi (Devanagari

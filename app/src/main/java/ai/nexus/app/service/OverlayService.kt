@@ -79,7 +79,8 @@ class OverlayService : Service() {
         running = false
         scope.cancel()
         bubble?.let { runCatching { wm.removeView(it) } }
-        bubble = null
+        closeTarget?.let { runCatching { wm.removeView(it) } }
+        bubble = null; closeTarget = null
         super.onDestroy()
     }
 
@@ -102,6 +103,9 @@ class OverlayService : Service() {
         else startForeground(NOTIF_ID, n)
     }
 
+    private var closeTarget: View? = null
+    private var teachingNow = false
+
     @SuppressLint("ClickableViewAccessibility")
     private fun addBubble() {
         val dp = resources.displayMetrics.density
@@ -110,7 +114,22 @@ class OverlayService : Service() {
             text = "N"; textSize = 22f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(IDLE_COLOR); setStroke((2 * dp).toInt(), Color.WHITE) }
             elevation = 8 * dp
-            contentDescription = "NEXUS assistant. Tap to talk, long press to stop."
+            contentDescription = "NEXUS assistant. Tap to talk, long press to stop, drag down to close."
+        }
+        // Always-visible close button on the bubble.
+        val close = TextView(this).apply {
+            text = "✕"; textSize = 11f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFFD63031.toInt()); setStroke((1.5f * dp).toInt(), Color.WHITE) }
+            elevation = 10 * dp
+            contentDescription = "Close the NEXUS bubble"
+            setOnClickListener { stopSelf() }
+        }
+        val badge = (20 * dp).toInt()
+        val bubbleBox = android.widget.FrameLayout(this).apply {
+            val pad = (6 * dp).toInt()
+            setPadding(0, pad, pad, 0)
+            addView(d, android.widget.FrameLayout.LayoutParams(size, size, Gravity.BOTTOM or Gravity.START))
+            addView(close, android.widget.FrameLayout.LayoutParams(badge, badge, Gravity.TOP or Gravity.END).apply { topMargin = -pad; rightMargin = -pad })
         }
         val cap = TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 13f; maxLines = 3; visibility = View.GONE
@@ -120,7 +139,7 @@ class OverlayService : Service() {
         }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            addView(d, LinearLayout.LayoutParams(size, size))
+            addView(bubbleBox, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(cap, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = (8 * dp).toInt() })
         }
         val lp = WindowManager.LayoutParams(
@@ -130,6 +149,22 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT,
         ).apply { gravity = Gravity.TOP or Gravity.START; x = (12 * dp).toInt(); y = (300 * dp).toInt() }
 
+        // "Drop here to close" target shown while dragging.
+        val target = TextView(this).apply {
+            text = "✕  Drop here to close"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            setPadding((18 * dp).toInt(), (12 * dp).toInt(), (18 * dp).toInt(), (12 * dp).toInt())
+            background = GradientDrawable().apply { cornerRadius = 30 * dp; setColor(0xE6D63031.toInt()) }
+            visibility = View.GONE
+        }
+        val tlp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; y = (80 * dp).toInt() }
+        wm.addView(target, tlp)
+        closeTarget = target
+
         val app = NexusApp.get(this)
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean { app.voice.toggle(); return true }
@@ -138,6 +173,7 @@ class OverlayService : Service() {
             }
             override fun onLongPress(e: MotionEvent) { app.voice.shutUp(); app.ask("stop") }
         })
+        val screenH = resources.displayMetrics.heightPixels
         var startX = 0; var startY = 0; var touchX = 0f; var touchY = 0f; var dragging = false
         d.setOnTouchListener { _, ev ->
             when (ev.action) {
@@ -146,9 +182,15 @@ class OverlayService : Service() {
                     val dx = ev.rawX - touchX; val dy = ev.rawY - touchY
                     if (dragging || dx * dx + dy * dy > 400) {
                         dragging = true
+                        target.visibility = View.VISIBLE
+                        target.alpha = if (ev.rawY > screenH * 0.82f) 1f else 0.6f
                         lp.x = startX + dx.toInt(); lp.y = startY + dy.toInt()
                         runCatching { wm.updateViewLayout(root, lp) }
                     }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    target.visibility = View.GONE
+                    if (dragging && ev.rawY > screenH * 0.82f) { stopSelf(); return@setOnTouchListener true }
                 }
             }
             if (!dragging) gestures.onTouchEvent(ev)
@@ -156,6 +198,7 @@ class OverlayService : Service() {
         }
         wm.addView(root, lp)
         bubble = root; dot = d; caption = cap
+        scope.launch { app.teaching.collect { teachingNow = it; render(app.voice.state.value, app.nexus.state.value) } }
     }
 
     private fun render(v: VoiceState, a: AgentState) {
@@ -167,7 +210,12 @@ class OverlayService : Service() {
             a == AgentState.PAUSED || a == AgentState.WAITING_FOR_USER -> PAUSE_COLOR
             else -> IDLE_COLOR
         }
-        ((dot?.background) as? GradientDrawable)?.setColor(color)
+        val dp = resources.displayMetrics.density
+        ((dot?.background) as? GradientDrawable)?.apply {
+            setColor(color)
+            // Red ring while NEXUS is watching you teach it a task.
+            setStroke(((if (teachingNow) 4 else 2) * dp).toInt(), if (teachingNow) 0xFFFF3B30.toInt() else Color.WHITE)
+        }
         dot?.text = when { v == VoiceState.HEARING -> "●"; a == AgentState.EXECUTING -> "⋯"; else -> "N" }
     }
 

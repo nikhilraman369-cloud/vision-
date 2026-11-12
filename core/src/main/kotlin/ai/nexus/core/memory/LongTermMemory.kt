@@ -6,7 +6,14 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
 
-enum class MemoryKind { FACT, PREFERENCE, CONTACT_ALIAS, APP_ALIAS, SHORTCUT, CORRECTION }
+enum class MemoryKind {
+    FACT, PREFERENCE, CONTACT_ALIAS, APP_ALIAS, SHORTCUT, CORRECTION,
+    /** A phrase the phone brain worked out once, cached as action lines so it's instant next time. */
+    LEARNED,
+    /** A task taught with "watch me", stored as action lines. */
+    ROUTINE,
+    NOTE,
+}
 
 @Serializable
 data class MemoryItem(
@@ -33,6 +40,10 @@ data class UserSettings(
     val speakResponses: Boolean = true,
     val confirmBeforeSending: Boolean = false,
     val useCloudAi: Boolean = true,
+    /** Use the free on-device model for commands the rules don't understand. */
+    val usePhoneBrain: Boolean = true,
+    /** Short tick/vibration instead of speaking "Done" after every action. */
+    val quietAcks: Boolean = true,
     val sendScreenshotsToCloud: Boolean = false,
 )
 

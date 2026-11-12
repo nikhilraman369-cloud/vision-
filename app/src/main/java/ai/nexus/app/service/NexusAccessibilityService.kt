@@ -49,8 +49,43 @@ class NexusAccessibilityService : AccessibilityService() {
         event ?: return
         if (event.packageName == packageName) return // ignore our own overlay
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) event.packageName?.toString()?.let { foregroundPackage = it }
+        recordForTeaching(event)
         lastEventAt = System.currentTimeMillis()
         changes.value = changes.value + 1
+    }
+
+    /** While the user says "watch me", turn their taps and typing into a routine. */
+    private fun recordForTeaching(e: AccessibilityEvent) {
+        val nexus = NexusApp.get(this).nexus
+        if (!nexus.isTeaching) return
+        val pkg = e.packageName?.toString() ?: return
+        when (e.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrNull()
+                if (packageManager.getLaunchIntentForPackage(pkg) != null) nexus.recordAppSwitch(pkg, label)
+            }
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                val src = e.source
+                val label = e.text?.joinToString(" ")?.takeIf { it.isNotBlank() }
+                    ?: e.contentDescription?.toString()
+                    ?: src?.let { n -> n.text?.toString() ?: n.contentDescription?.toString() ?: firstLabel(n) }
+                nexus.recordUserAction(pkg, label, null)
+            }
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                val typed = e.text?.joinToString("")?.takeIf { it.isNotBlank() } ?: return
+                nexus.recordUserAction(pkg, null, typed)
+            }
+        }
+    }
+
+    private fun firstLabel(n: AccessibilityNodeInfo, depth: Int = 0): String? {
+        if (depth > 3) return null
+        for (i in 0 until n.childCount) {
+            val c = n.getChild(i) ?: continue
+            (c.text?.toString() ?: c.contentDescription?.toString())?.takeIf { it.isNotBlank() }?.let { return it }
+            firstLabel(c, depth + 1)?.let { return it }
+        }
+        return null
     }
 
     override fun onInterrupt() {}

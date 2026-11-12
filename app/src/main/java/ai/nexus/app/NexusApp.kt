@@ -2,7 +2,9 @@ package ai.nexus.app
 
 import android.app.Application
 import android.content.Context
+import ai.nexus.app.brain.PhoneBrainManager
 import ai.nexus.app.device.AndroidDevice
+import ai.nexus.app.service.OverlayService
 import ai.nexus.app.device.AndroidSystemActions
 import ai.nexus.app.voice.VoiceEngine
 import ai.nexus.core.agent.AgentState
@@ -29,6 +31,10 @@ class NexusApp : Application() {
     lateinit var nexus: Nexus
     lateinit var voice: VoiceEngine
     lateinit var device: AndroidDevice
+    lateinit var brainManager: PhoneBrainManager
+
+    private val _teaching = MutableStateFlow(false)
+    val teaching: StateFlow<Boolean> = _teaching
 
     private val _chat = MutableStateFlow<List<ChatLine>>(emptyList())
     val chat: StateFlow<List<ChatLine>> = _chat
@@ -43,6 +49,15 @@ class NexusApp : Application() {
         voice = VoiceEngine(this) { text -> ask(text) }
         voice.init()
         applySettings()
+
+        // Free on-device brain: load it in the background if it has been downloaded.
+        brainManager = PhoneBrainManager(this, scope)
+        scope.launch {
+            brainManager.state.collect { st ->
+                nexus.phoneBrain = if (st is PhoneBrainManager.State.Ready) brainManager.brain else null
+            }
+        }
+        brainManager.warmUp()
 
         scope.launch {
             nexus.events.collect { e ->
@@ -62,6 +77,9 @@ class NexusApp : Application() {
                         AgentState.WAITING_FOR_USER -> "Waiting for you"
                     }
                     is NexusEvent.Error -> add(ChatLine(false, "⚠ ${e.message}", detail = true))
+                    is NexusEvent.Ack -> { add(ChatLine(false, e.text)); voice.tick() }
+                    NexusEvent.HideBubble -> OverlayService.stop(this@NexusApp)
+                    is NexusEvent.TeachingChanged -> _teaching.value = e.active
                 }
             }
         }

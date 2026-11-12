@@ -11,8 +11,10 @@ android {
         applicationId = "ai.nexus.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+        // The on-device brain ships native code; arm64 covers every modern phone and keeps the APK small.
+        ndk { abiFilters += setOf("arm64-v8a") }
     }
 
     buildTypes {
@@ -50,4 +52,6 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Free on-device language model runtime (Google MediaPipe LLM Inference).
+    implementation("com.google.mediapipe:tasks-genai:0.10.27")
 }

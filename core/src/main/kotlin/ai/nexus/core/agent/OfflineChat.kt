@@ -15,6 +15,11 @@ object OfflineChat {
         "I asked the Wi-Fi for a date. It said we have no connection.",
     )
 
+    private val known = Regex("^(hi|hello|hey|namaste|hii+|yo)\\b|how are you|kaise ho|thank|shukriya|dhanyavaad|\\btime\\b|\\bdate\\b|what day|today|battery|joke|your name|who are you|what can you do|\\bhelp\\b")
+
+    /** True when this can be answered offline without any model. */
+    fun handles(text: String): Boolean = known.containsMatchIn(Fuzzy.normalize(text))
+
     suspend fun reply(text: String, memory: LongTermMemory, system: SystemActions): String {
         val t = Fuzzy.normalize(text)
         val name = memory.settings.name

@@ -26,11 +26,17 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(it, normalized, 0.95)))
         }
 
+        // "done, call it morning" belongs together even with the comma.
+        TEACH_STOP.matchEntire(TextNormalizer.stripFillers(normalized))?.let { m ->
+            return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.TeachStop(clean(m.groupValues[1])), normalized, 0.95)))
+        }
+
         val clauses = CommandSplitter.split(normalized)
         val steps = ArrayList<ParsedStep>()
         var appContext: String? = null
         for (clause in clauses) {
-            val c = TextNormalizer.stripFillers(clause)
+            // Don't trim words like "for me" off text the user wants typed.
+            val c = if (PAYLOAD_START.containsMatchIn(clause)) TextNormalizer.stripFillers(clause, trailing = false) else TextNormalizer.stripFillers(clause)
             if (c.isBlank()) continue
             val cmds = parseClause(c, appContext)
             for (cmd in cmds) {
@@ -124,9 +130,9 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     }
 
     private val rules: List<(String, String?) -> List<Command>?> = listOf(
-        ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
+        ::extras, ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
         ::messaging, ::calls, ::toggles, ::levels, ::settings, ::notifications, ::files, ::media, ::results,
-        ::sections, ::search, ::write, ::tap, ::misc, ::memory, ::url, ::openApp,
+        ::sections, ::search, ::sendText, ::write, ::tap, ::misc, ::memory, ::url, ::openApp,
     )
 
     private fun navigation(c: String, ctx: String?): List<Command>? {
@@ -586,8 +592,10 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         return null
     }
 
+    private val onThis = rx("\\s+(?:on|in|under|to)\\s+(?:this|the|that|it|is|current)(?:\\s+(?:video|reel|post|short|photo|pic|one))?$|\\s+(?:on|under)\\s+it$|\\s+(?:is|iss|isme|ispe|is par|is pe)\\s+(?:video|reel|post)\\s+(?:pe|par|mein|me)$")
+
     private fun write(c: String, ctx: String?): List<Command>? {
-        var s = c
+        var s = c.replace(onThis, "")
         var submit: Boolean? = null
         noSend.find(s)?.let { submit = false; s = s.removeRange(it.range).trim() }
         rx("^(?:write|type|enter|put|add|input)(?: a| the)? (?:comment|reply)(?: saying| that says|:)? (.+)$").matchEntire(s)?.let {
@@ -610,6 +618,110 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         }
         rx("^(.+?) (?:comment karo|comment kar do)$").matchEntire(s)?.let {
             return listOf(Command.OpenComments, Command.Write(clean(it.groupValues[1])!!, submit ?: true))
+        }
+        return null
+    }
+
+    /** "send do it later" / "send hello" with no recipient: type it where you are and send. */
+    private fun sendText(c: String, ctx: String?): List<Command>? {
+        rx("^send (?:him|her|them|usko|unko) (?:a )?(?:message |msg |text )?(?:saying |that )?(.+)$").matchEntire(c)?.let {
+            return listOf(Command.SendMessage(SAME_CONTACT, clean(it.groupValues[1])!!, null, true))
+        }
+        rx("^(?:send|bhejo|bhej do|post|reply)(?: (?:the )?(?:message|text|msg))?(?: saying| that|:)? (.+)$").matchEntire(c)?.let {
+            val text = clean(it.groupValues[1].replace(onThis, "")) ?: return null
+            if (rx("^(?:an? |the )?(?:comment|reply|e-?mail|mail)\\b").containsMatchIn(text)) return null
+            if (rx("^(?:it|this|that|the (?:message|comment|email|mail|reply))$").matches(text)) return listOf(Command.Submit)
+            return listOf(Command.Write(text, true))
+        }
+        rx("^(.+?) (?:bhejo|bhej do|send karo|send kar do|send kardo)$").matchEntire(c)?.let {
+            val text = clean(it.groupValues[1]) ?: return null
+            if (rx("^(?:message|msg|ye|yeh|isko)$").matches(text)) return listOf(Command.Submit)
+            return listOf(Command.Write(text, true))
+        }
+        return null
+    }
+
+    // ---------------------------------------------------- alarms, notes, maths, teaching, bubble
+
+    private fun timeOf(h: String, m: String?, ampm: String?): Pair<Int, Int>? {
+        var hour = h.toIntOrNull() ?: Numbers.parse(h) ?: return null
+        val min = m?.toIntOrNull() ?: 0
+        val a = ampm?.lowercase()?.replace(".", "")?.trim()
+        if (a != null) {
+            if ((a == "pm" || a == "shaam" || a == "raat" || a == "evening" || a == "night") && hour < 12) hour += 12
+            if ((a == "am" || a == "subah" || a == "morning") && hour == 12) hour = 0
+        }
+        return if (hour in 0..23 && min in 0..59) hour to min else null
+    }
+
+    private fun durationSeconds(n: String, unit: String): Int? {
+        val v = n.toDoubleOrNull() ?: Numbers.parse(n)?.toDouble() ?: return null
+        val u = unit.lowercase()
+        val mult = when { u.startsWith("h") || u.startsWith("ghant") -> 3600; u.startsWith("s") -> 1; else -> 60 }
+        return (v * mult).toInt().takeIf { it > 0 }
+    }
+
+    private val unitRx = "(seconds?|secs?|minutes?|mins?|min|hours?|hrs?|hr|ghante|ghanta|minute)"
+    private val clock = "(\\d{1,2})(?:[:.](\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?|am|pm)?"
+
+    private fun extras(c: String, ctx: String?): List<Command>? {
+        // Teaching / routines
+        if (rx("^(?:watch me|watch and learn|learn this|let me show you|i'?ll show you|record this|dekho main kaise karta hu+n?|main dikhata hu+n?)$").matches(c)) return listOf(Command.TeachStart)
+        rx("^(?:done|stop watching|stop recording|that'?s it|ho gaya|bas ho gaya|finish(?:ed)?)(?:[,.]?\\s*(?:save (?:it|this) as|call it|name it|naam rakho)\\s+(.+))?$").matchEntire(c)?.let {
+            return listOf(Command.TeachStop(clean(it.groupValues[1])))
+        }
+        rx("^(?:save (?:it|this) as|call it|name it)\\s+(.+)$").matchEntire(c)?.let { return listOf(Command.TeachStop(clean(it.groupValues[1]))) }
+        // Bubble
+        if (rx("^(?:hide|close|remove|stop|turn off|band karo|hatao)(?: the)?(?: floating)? (?:bubble|button|window|overlay|icon)$|^(?:bubble|floating button) (?:hatao|band karo|hide karo)$").matches(c)) return listOf(Command.HideBubble)
+        // Reminders → timers/alarms with a label
+        rx("^remind me (?:to |about )?(.+?) in (\\d+(?:\\.\\d+)?|an?|one|two|five|ten) $unitRx$").matchEntire(c)?.let {
+            val n = if (it.groupValues[2] == "a" || it.groupValues[2] == "an") "1" else it.groupValues[2]
+            return listOf(Command.SetTimer(durationSeconds(n, it.groupValues[3]) ?: return null, clean(it.groupValues[1])))
+        }
+        rx("^remind me in (\\d+(?:\\.\\d+)?|an?|one|two|five|ten) $unitRx (?:to |about )?(.+)$").matchEntire(c)?.let {
+            val n = if (it.groupValues[1] == "a" || it.groupValues[1] == "an") "1" else it.groupValues[1]
+            return listOf(Command.SetTimer(durationSeconds(n, it.groupValues[2]) ?: return null, clean(it.groupValues[3])))
+        }
+        rx("^remind me (?:to |about )?(.+?) (?:at|by) $clock$").matchEntire(c)?.let {
+            val (h, m) = timeOf(it.groupValues[2], it.groupValues[3].ifBlank { null }, it.groupValues[4].ifBlank { null }) ?: return null
+            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[1])))
+        }
+        rx("^remind me (?:at|by) $clock (?:to |about )?(.+)$").matchEntire(c)?.let {
+            val (h, m) = timeOf(it.groupValues[1], it.groupValues[2].ifBlank { null }, it.groupValues[3].ifBlank { null }) ?: return null
+            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[4])))
+        }
+        // Timers
+        rx("^(?:set |start |put |lagao )?(?:an? )?(?:timer|countdown) (?:for |of )?(\\d+(?:\\.\\d+)?|an?|one|two|five|ten) $unitRx(?: (?:for|called) (.+))?$").matchEntire(c)?.let {
+            val n = if (it.groupValues[1].startsWith("a")) "1" else it.groupValues[1]
+            return listOf(Command.SetTimer(durationSeconds(n, it.groupValues[2]) ?: return null, clean(it.groupValues[3])))
+        }
+        rx("^(\\d+(?:\\.\\d+)?) $unitRx (?:ka |ki )?timer(?: (?:lagao|laga do|set karo|start karo))?$|^(\\d+(?:\\.\\d+)?) $unitRx timer$").matchEntire(c)?.let {
+            val n = it.groupValues[1].ifBlank { it.groupValues[3] }; val u = it.groupValues[2].ifBlank { it.groupValues[4] }
+            return listOf(Command.SetTimer(durationSeconds(n, u) ?: return null))
+        }
+        // Alarms
+        rx("^(?:set |put |create |lagao )?(?:an? )?alarm (?:for |at )?$clock(?: (?:tomorrow|today|kal))?(?: (?:for|to|called|saying) (.+))?$").matchEntire(c)?.let {
+            val (h, m) = timeOf(it.groupValues[1], it.groupValues[2].ifBlank { null }, it.groupValues[3].ifBlank { null }) ?: return null
+            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[4])))
+        }
+        rx("^wake me(?: up)? (?:at )?$clock$").matchEntire(c)?.let {
+            val (h, m) = timeOf(it.groupValues[1], it.groupValues[2].ifBlank { null }, it.groupValues[3].ifBlank { null }) ?: return null
+            return listOf(Command.SetAlarm(h, m, "Wake up"))
+        }
+        rx("^(subah|shaam|raat)? ?(\\d{1,2})(?:[:.](\\d{2}))? baje (?:ka )?alarm(?: (?:lagao|laga do|set karo))?$").matchEntire(c)?.let {
+            val (h, m) = timeOf(it.groupValues[2], it.groupValues[3].ifBlank { null }, it.groupValues[1].ifBlank { null }) ?: return null
+            return listOf(Command.SetAlarm(h, m))
+        }
+        // Notes
+        rx("^(?:take (?:a )?note|make a note|add (?:a )?note|note down|note|write down|jot down|note karo|likh lo)(?: that)?:? (.+)$").matchEntire(c)?.let {
+            return listOf(Command.Note(clean(it.groupValues[1])!!))
+        }
+        if (rx("^(?:read|show|what are|tell me)(?: me)? (?:my |the )?notes$|^notes (?:padho|dikhao|batao)$").matches(c)) return listOf(Command.ReadNotes)
+        if (rx("^(?:clear|delete|remove|erase) (?:all )?(?:my |the )?notes$").matches(c)) return listOf(Command.ClearNotes)
+        // Maths
+        rx("^(?:what(?:'s| is)|calculate|compute|how much is|kitna hai|kitne hote hain|solve)?\\s*([\\d\\s.+\\-*/x×÷%()^]+|[\\d.]+ ?% of [\\d.]+|[\\d.]+ (?:plus|minus|times|into|multiplied by|divided by|by|over|guna|aur|minus) [\\d.]+(?: (?:plus|minus|times|into|multiplied by|divided by|by|over) [\\d.]+)*)\\s*\\??$").matchEntire(c)?.let {
+            val e = it.groupValues[1].trim()
+            if (e.any { ch -> ch.isDigit() } && (e.any { ch -> ch in "+-*/x×÷%^" } || e.contains(' '))) return listOf(Command.Calculate(e))
         }
         return null
     }
@@ -678,6 +790,8 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
 
     companion object {
         const val SAME_CONTACT = "__same_contact__"
+        private val TEACH_STOP = Regex("^(?:done|stop watching|stop recording|that'?s it|ho gaya|bas ho gaya|finish(?:ed)?)[,.]?\\s*(?:save (?:it|this) as|call it|name it|naam rakho)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        private val PAYLOAD_START = Regex("^\\s*(?:(?:please|pls|can you|could you|just|hey nexus)\\s+)*(?:type|write|send|comment|reply|message|text|note|post|likho)\\b|\\b(?:saying|that says)\\b", RegexOption.IGNORE_CASE)
         const val PREVIOUS_APP = "__previous_app__"
 
         private val REASONING = Regex("\\b(?:tell me (?:if|whether|what|how|about)|let me know|whether|summari[sz]e|should i|figure out|compare|decide|explain (?:it|this)|batao ki|bata do ki)\\b", RegexOption.IGNORE_CASE)

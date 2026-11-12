@@ -314,5 +314,34 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
         return if (start(i)) SysResult.Done(if (to != null && !to.contains('@')) "Add $to as the recipient — I couldn't find their email address." else "") else SysResult.Failed("No email app found.")
     }
 
+    override suspend fun setAlarm(hour: Int, minute: Int, label: String?): SysResult {
+        val i = Intent(android.provider.AlarmClock.ACTION_SET_ALARM)
+            .putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+            .putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+            .putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+        label?.let { i.putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, it) }
+        return if (start(i)) SysResult.Done("") else SysResult.Failed("No clock app could set the alarm.")
+    }
+
+    override suspend fun setTimer(seconds: Int, label: String?): SysResult {
+        val i = Intent(android.provider.AlarmClock.ACTION_SET_TIMER)
+            .putExtra(android.provider.AlarmClock.EXTRA_LENGTH, seconds)
+            .putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+        label?.let { i.putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, it) }
+        return if (start(i)) SysResult.Done("") else SysResult.Failed("No clock app could set the timer.")
+    }
+
+    override suspend fun replyToNotification(fromName: String, text: String): SysResult? {
+        val (_, action) = NexusNotificationListener.replyTarget(fromName) ?: return null
+        val inputs = action.remoteInputs ?: return null
+        return runCatching {
+            val results = android.os.Bundle().apply { inputs.forEach { putCharSequence(it.resultKey, text) } }
+            val fill = Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            android.app.RemoteInput.addResultsToIntent(inputs, fill, results)
+            action.actionIntent.send(context, 0, fill)
+            SysResult.Done("")
+        }.getOrNull()
+    }
+
     override suspend fun batteryPercent(): Int? = context.getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
 }

@@ -60,6 +60,13 @@ interface SystemActions {
     suspend fun shareFile(file: FileItem): SysResult
 
     suspend fun composeEmail(to: String?, subject: String?, body: String?): SysResult
+    suspend fun setAlarm(hour: Int, minute: Int, label: String?): SysResult = SysResult.Failed("Alarms aren't available.")
+    suspend fun setTimer(seconds: Int, label: String?): SysResult = SysResult.Failed("Timers aren't available.")
+    /**
+     * Reply straight from a notification's reply action (WhatsApp, Telegram, SMS…)
+     * without opening the app. Returns null when no matching notification can be replied to.
+     */
+    suspend fun replyToNotification(fromName: String, text: String): SysResult? = null
     suspend fun batteryPercent(): Int?
     fun nowMs(): Long = System.currentTimeMillis()
 }

@@ -42,6 +42,7 @@ class VoiceEngine(private val context: Context, private val onUtterance: (String
     /** After the wake word is heard, follow-ups don't need it for a short while. */
     @Volatile private var awakeUntil = 0L
     @Volatile private var wantListening = false
+    @Volatile private var preferOffline = true
 
     fun init() {
         tts = TextToSpeech(context) { status ->
@@ -92,7 +93,11 @@ class VoiceEngine(private val context: Context, private val onUtterance: (String
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, tag)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+        // Finish quickly after you stop talking.
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 450L)
+        // On-device recognition is faster; falls back to online if the language pack is missing.
+        if (preferOffline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
     }
 
     private fun startRecognizer() {
@@ -123,6 +128,13 @@ class VoiceEngine(private val context: Context, private val onUtterance: (String
 
         override fun onError(error: Int) {
             _state.value = VoiceState.OFF
+            // Offline speech pack not installed: switch to online recognition and retry once.
+            if (preferOffline && (error == SpeechRecognizer.ERROR_SERVER || error == SpeechRecognizer.ERROR_NETWORK ||
+                    error == 12 /* ERROR_LANGUAGE_NOT_SUPPORTED */ || error == 13 /* ERROR_LANGUAGE_UNAVAILABLE */)) {
+                preferOffline = false
+                main.postDelayed({ startRecognizer() }, 100)
+                return
+            }
             val retry = continuous && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT)
             if (retry) main.postDelayed({ startRecognizer() }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600 else 250)
         }
@@ -149,6 +161,16 @@ class VoiceEngine(private val context: Context, private val onUtterance: (String
 
     /** Keep the follow-up window open while a conversation is going. */
     fun extendConversation() { if (awakeUntil > System.currentTimeMillis()) awakeUntil = System.currentTimeMillis() + 20_000 }
+
+    /** A short tick + vibration for quick confirmations (faster than speaking). */
+    fun tick() = main.post {
+        runCatching {
+            val v = context.getSystemService(android.os.Vibrator::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= 29) v?.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
+            else @Suppress("DEPRECATION") v?.vibrate(25)
+        }
+        if (continuous) main.postDelayed({ if (tts?.isSpeaking != true && _state.value == VoiceState.OFF) startRecognizer() }, 250)
+    }
 
     fun release() {
         main.post {

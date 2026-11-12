@@ -61,7 +61,7 @@ object TextNormalizer {
     }
 
     /** Removes politeness and filler words from the edges of one clause. */
-    fun stripFillers(clause: String): String {
+    fun stripFillers(clause: String, trailing: Boolean = true): String {
         var s = clause.trim().trimEnd('.', '!', '?', ',').trim()
         var changed = true
         while (changed && s.isNotEmpty()) {
@@ -70,7 +70,7 @@ object TextNormalizer {
                 val r = Regex("^${Regex.escape(f)}\\b[\\s,]*", RegexOption.IGNORE_CASE)
                 if (r.containsMatchIn(s)) { s = s.replace(r, "").trim(); changed = true }
             }
-            for (f in trailingFillers) {
+            if (trailing) for (f in trailingFillers) {
                 val r = Regex("[\\s,]*\\b${Regex.escape(f)}$", RegexOption.IGNORE_CASE)
                 if (r.containsMatchIn(s) && s.length > f.length) { s = s.replace(r, "").trim(); changed = true }
             }

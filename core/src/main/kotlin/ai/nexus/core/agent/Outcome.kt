@@ -23,6 +23,10 @@ sealed interface NexusEvent {
     data class StepStarted(val index: Int, val total: Int, val description: String) : NexusEvent
     data class StepFinished(val index: Int, val description: String, val outcome: Outcome) : NexusEvent
     data class Error(val message: String) : NexusEvent
+    /** A short confirmation shown (and ticked/vibrated) without speaking. */
+    data class Ack(val text: String) : NexusEvent
+    data object HideBubble : NexusEvent
+    data class TeachingChanged(val active: Boolean) : NexusEvent
 }
 
 enum class AgentState { IDLE, THINKING, EXECUTING, PAUSED, WAITING_FOR_USER }
