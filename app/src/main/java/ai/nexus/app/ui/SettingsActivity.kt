@@ -103,6 +103,7 @@ class SettingsActivity : AppCompatActivity() {
             setSelection(langs.indexOfFirst { it.first == s.language }.coerceAtLeast(0))
             box.addView(this, Ui.matchWrap())
         }
+        toggle("High-accuracy listening (uses internet; much better for Hinglish and names)", s.accurateListening) { v -> update { it.copy(accurateListening = v) } }
         toggle("Speak replies", s.speakResponses) { v -> update { it.copy(speakResponses = v) } }
         toggle("Continuous listening (keeps listening after each reply)", s.continuousListening) { v -> update { it.copy(continuousListening = v) } }
         toggle("Wake word (only respond after \"Hey Nexus\" in continuous mode)", s.wakeWordEnabled) { v -> update { it.copy(wakeWordEnabled = v) } }
@@ -130,6 +131,6 @@ class SettingsActivity : AppCompatActivity() {
             finish()
         }, Ui.matchWrap().apply { topMargin = dp(20) })
 
-        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(box, LinearLayout.LayoutParams(-1, -2)) })
+        setContentView(ScrollView(this).apply { fitsSystemWindows = true; setBackgroundColor(Ui.BG); addView(box, LinearLayout.LayoutParams(-1, -2)) })
     }
 }

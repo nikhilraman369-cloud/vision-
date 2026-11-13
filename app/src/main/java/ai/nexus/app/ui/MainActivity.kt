@@ -109,6 +109,7 @@ class MainActivity : AppCompatActivity() {
         }
         row.addView(mic, LinearLayout.LayoutParams(dp(52), dp(52)).apply { leftMargin = dp(8) })
         root.addView(row, Ui.matchWrap())
+        root.fitsSystemWindows = true
         setContentView(root)
 
         lifecycleScope.launch { app.chat.collect { render(it) } }

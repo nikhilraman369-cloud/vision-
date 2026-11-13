@@ -21,7 +21,7 @@ class HelpActivity : AppCompatActivity() {
             box.addView(label(title, 13f, Ui.ACCENT, bold = true), Ui.matchWrap().apply { topMargin = dp(16) })
             for (e in examples) box.addView(button(e, Ui.CARD) { app.ask(e); finish() }.apply { textSize = 13.5f; isAllCaps = false }, Ui.matchWrap().apply { topMargin = dp(4) })
         }
-        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(box) })
+        setContentView(ScrollView(this).apply { fitsSystemWindows = true; setBackgroundColor(Ui.BG); addView(box) })
     }
 
     companion object {

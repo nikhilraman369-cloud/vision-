@@ -44,6 +44,8 @@ data class UserSettings(
     val usePhoneBrain: Boolean = true,
     /** Short tick/vibration instead of speaking "Done" after every action. */
     val quietAcks: Boolean = true,
+    /** Use the online speech engine (more accurate, especially Hinglish and names). */
+    val accurateListening: Boolean = true,
     val sendScreenshotsToCloud: Boolean = false,
 )
 

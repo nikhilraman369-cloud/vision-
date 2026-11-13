@@ -22,7 +22,14 @@ enum class VoiceState { OFF, LISTENING, HEARING, SPEAKING }
  * obey itself), resumes listening automatically after replies in continuous
  * mode, and supports an optional wake word.
  */
-class VoiceEngine(private val context: Context, private val onUtterance: (String) -> Unit) {
+class VoiceEngine(
+    private val context: Context,
+    /** Picks the best of the recogniser's guesses (e.g. the one NEXUS understands). */
+    private val chooseBest: (List<String>) -> String = { it.first() },
+    private val onUtterance: (String) -> Unit,
+) {
+    /** Online recognition: more accurate for Hinglish and names (needs internet). */
+    @Volatile var accurate = true
     private val main = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
@@ -92,12 +99,12 @@ class VoiceEngine(private val context: Context, private val onUtterance: (String
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, tag)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         // Finish quickly after you stop talking.
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 450L)
         // On-device recognition is faster; falls back to online if the language pack is missing.
-        if (preferOffline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        if (preferOffline && !accurate) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
     }
 
     private fun startRecognizer() {
@@ -142,7 +149,8 @@ class VoiceEngine(private val context: Context, private val onUtterance: (String
         override fun onResults(results: Bundle?) {
             _state.value = VoiceState.OFF
             _partial.value = ""
-            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
+            val all = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+            val text = if (all.isEmpty()) "" else runCatching { chooseBest(all) }.getOrDefault(all.first())
             if (text.isNotEmpty() && accept(text)) onUtterance(text)
             else if (continuous) main.postDelayed({ startRecognizer() }, 200)
         }

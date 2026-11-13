@@ -37,7 +37,7 @@ class RoutinesActivity : AppCompatActivity() {
         }, Ui.matchWrap().apply { topMargin = dp(6) })
         list = vbox(0)
         box.addView(list, Ui.matchWrap().apply { topMargin = dp(12) })
-        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(box) })
+        setContentView(ScrollView(this).apply { fitsSystemWindows = true; setBackgroundColor(Ui.BG); addView(box) })
     }
 
     override fun onResume() { super.onResume(); refresh() }

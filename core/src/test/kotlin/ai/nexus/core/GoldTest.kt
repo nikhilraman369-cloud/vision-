@@ -93,6 +93,16 @@ class GoldTest {
         assertTrue("launch:com.instagram.android" in p.log, p.log.toString())
     }
 
+    @Test fun stuckBrainNeverFreezesLaterCommands() {
+        val p = ScreenPhone().apply { foreground = "com.whatsapp" }; val (n, _) = setup(p)
+        n.phoneBrain = PhoneBrain(TextGenerator { Thread.sleep(60_000); "" })   // a model that hangs
+        runBlocking { withTimeout(8_000) { n.process("blah foo unknown thing") } }
+        runBlocking { withTimeout(3_000) { n.process("Family chat") } }         // names something on screen
+        assertEquals("Family ❤️", p.waChat)
+        runBlocking { withTimeout(3_000) { n.process("send hello") } }
+        assertEquals(listOf("hello"), p.aiSent)
+    }
+
     @Test fun brokenBrainDoesNotBreakNormalCommands() {
         val p = SocialPhone(); val (n, _) = setup(p)
         n.phoneBrain = PhoneBrain(TextGenerator { "garbage output !!" })

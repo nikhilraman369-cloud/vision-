@@ -48,7 +48,8 @@ class NexusAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
         if (event.packageName == packageName) return // ignore our own overlay
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) event.packageName?.toString()?.let { foregroundPackage = it }
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) event.packageName?.toString()
+            ?.takeIf { it != "com.vivo.card" && it != "com.android.systemui" }?.let { foregroundPackage = it }
         recordForTeaching(event)
         lastEventAt = System.currentTimeMillis()
         changes.value = changes.value + 1
@@ -97,15 +98,24 @@ class NexusAccessibilityService : AccessibilityService() {
 
     // ------------------------------------------------------------ reading
 
+    /** System overlays that sit on top of apps but are never what the user means. */
+    private fun isOverlayJunk(root: AccessibilityNodeInfo): Boolean {
+        val pkg = root.packageName?.toString() ?: return true
+        if (pkg == packageName || pkg == "com.vivo.card" || pkg == "com.android.systemui" || pkg.contains("gesture") || pkg.contains("navigationbar")) return true
+        val r = Rect(); root.getBoundsInScreen(r)
+        val dm = resources.displayMetrics
+        // Tiny or off-screen windows (gesture bars, edge panels).
+        return r.width() < dm.widthPixels / 3 || r.height() < dm.heightPixels / 4 || (root.childCount == 0 && root.text == null)
+    }
+
     private fun appRoot(): AccessibilityNodeInfo? {
-        // Prefer the active application window; skip our own bubble and system bars.
+        rootInActiveWindow?.takeIf { !isOverlayJunk(it) }?.let { return it }
         val wins = runCatching { windows }.getOrDefault(emptyList())
-        val app = wins.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            .sortedWith(compareByDescending<AccessibilityWindowInfo> { it.isActive }.thenByDescending { it.isFocused }.thenByDescending { it.layer })
-            .mapNotNull { it.root }
-            .firstOrNull { it.packageName != packageName }
-        return app ?: rootInActiveWindow?.takeIf { it.packageName != packageName }
-            ?: wins.mapNotNull { it.root }.firstOrNull { it.packageName != packageName }
+        val roots = wins.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .sortedWith(compareByDescending<AccessibilityWindowInfo> { it.isActive }.thenByDescending { it.isFocused })
+            .mapNotNull { it.root }.filter { !isOverlayJunk(it) }
+        // Prefer the app we know is in front, else the biggest real window.
+        return roots.firstOrNull { it.packageName?.toString() == foregroundPackage } ?: roots.maxByOrNull { val r = Rect(); it.getBoundsInScreen(r); r.width().toLong() * r.height() }
     }
 
     fun takeSnapshot(): ScreenSnapshot? {

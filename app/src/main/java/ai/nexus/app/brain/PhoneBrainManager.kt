@@ -97,7 +97,8 @@ class PhoneBrainManager(private val context: Context, private val scope: Corouti
     }
 
     private suspend fun generate(prompt: String): String = withContext(Dispatchers.IO) {
-        runLock.withLock {
+        if (!runLock.tryLock()) throw IllegalStateException("Phone brain is busy")
+        try {
             val engine = llm ?: throw IllegalStateException("Phone brain not loaded")
             val t0 = System.currentTimeMillis()
             val session = LlmInferenceSession.createFromOptions(
@@ -111,7 +112,7 @@ class PhoneBrainManager(private val context: Context, private val scope: Corouti
                 session.close()
                 lastLatencyMs = System.currentTimeMillis() - t0
             }
-        }
+        } finally { runLock.unlock() }
     }
 
     fun download(model: BrainModel) {

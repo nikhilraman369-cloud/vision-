@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -155,12 +156,17 @@ class Nexus(
                     val learned = (memory.lookup(MemoryKind.LEARNED, clauseKey) ?: memory.lookup(MemoryKind.LEARNED, key))
                         ?.let { CommandDsl.parse(it) }?.takeIf { it.isNotEmpty() }
                     if (learned != null) { learned.forEach { newSteps += ParsedStep(it, st.source, 0.95) }; continue }
+                    // Screen first: a short phrase that names something visible ("Vikas chat") is a tap.
+                    val snap = kotlinx.coroutines.withTimeoutOrNull(1500) { ops.screen() }
+                    val visible = visibleLabelFor(st.source, snap)
+                    if (visible != null) { newSteps += ParsedStep(Command.Tap(visible), st.source, 0.9); continue }
                     val isQuestion = st.command is Command.Chat && cloudReady
-                    if (pb != null && !isQuestion) {
+                    if (pb != null && !isQuestion && !pb.busy) {
                         setState(AgentState.THINKING)
-                        val translated = kotlinx.coroutines.withTimeoutOrNull(PHONE_BRAIN_TIMEOUT_MS) {
-                            runCatching { pb.translate(st.source, ops.screen()) }.getOrNull()
-                        }?.filter { it !is Command.Chat && it !is Command.Agentic }
+                        // Detached: if the model is slow or stuck, we stop waiting and it can never block later commands.
+                        val work = scope.async { runCatching { pb.translate(st.source, snap) }.getOrNull() }
+                        val translated = kotlinx.coroutines.withTimeoutOrNull(PHONE_BRAIN_TIMEOUT_MS) { work.await() }
+                            ?.filter { it !is Command.Chat && it !is Command.Agentic }
                         if (!translated.isNullOrEmpty()) {
                             translated.forEach { newSteps += ParsedStep(it, st.source, 0.8) }
                             learnPairs += clauseKey to translated
@@ -282,6 +288,7 @@ class Nexus(
         val notes = ArrayList<String>()
         val total = steps.size
         val executed = ArrayList<Command>()
+        var saidSomething = false
         for ((i, step) in steps.withIndex()) {
             awaitNotPaused()
             val cmd = resolveReferences(step.command)
@@ -319,7 +326,7 @@ class Nexus(
             executed += cmd
 
             when (outcome) {
-                is Outcome.Success -> outcome.message?.let { say(it) }
+                is Outcome.Success -> outcome.message?.let { saidSomething = true; say(it) }
                 is Outcome.Uncertain -> notes += outcome.message
                 is Outcome.Asked -> {
                     // e.g. "What should I say?" – resume this step with the answer.
@@ -349,7 +356,7 @@ class Nexus(
         when {
             notes.isNotEmpty() -> say(if (total > 1) "Done, with a note: " + notes.joinToString(" ") else notes.joinToString(" "))
             total > 1 -> acknowledge("Done.")
-            else -> if (needsAck(steps[0].command)) acknowledge(ack(steps[0].command))
+            else -> if (needsAck(steps[0].command)) acknowledge(ack(steps[0].command)) else if (!saidSomething) emit(NexusEvent.Ack(""))
         }
         return notes.isEmpty()
     }
@@ -395,6 +402,18 @@ class Nexus(
         }
         if (cmd is Command.PlayMedia) ctx.currentItem = "song: $label"
         return Outcome.Success()
+    }
+
+    private val leadVerbs = Regex("^(?:open|show|go to|tap|click|press|select|play|kholo|dikhao)\\s+", RegexOption.IGNORE_CASE)
+
+    /** The on-screen label a short phrase refers to, if any. */
+    private fun visibleLabelFor(phrase: String, s: ai.nexus.core.screen.ScreenSnapshot?): String? {
+        s ?: return null
+        if (phrase.split(' ').size > 5) return null
+        val cleaned = phrase.replace(leadVerbs, "").replace(qualifiers, " ").replace(Regex("\\s+"), " ").trim()
+        if (cleaned.length < 2) return null
+        return ai.nexus.core.screen.ElementFinder(s).rankByLabel(listOf(cleaned))
+            .firstOrNull { m -> !m.node.editable && m.score >= 0.85 && s.clickableTarget(m.node).clickable }?.node?.label
     }
 
     // ================================================================ teaching ("watch me")
@@ -642,7 +661,8 @@ class Nexus(
             // Not an installed app: maybe a chat/group/item in the current app.
             val cur = ops.screen()?.packageName
             if (cur in setOf(Packages.WHATSAPP, Packages.WHATSAPP_BUSINESS, Packages.INSTAGRAM)) {
-                return appSkill(cur)?.handle(Command.OpenChat(name), env) ?: Outcome.NeedsAgent("I couldn't find $name.")
+                val who = name.replace(qualifiers, " ").replace(Regex("\\s+"), " ").trim().ifBlank { name }
+                return appSkill(cur)?.handle(Command.OpenChat(who), env) ?: Outcome.NeedsAgent("I couldn't find $name.")
             }
             return Outcome.NeedsAgent("I couldn't find an app or anything on screen called $name.")
         }
@@ -1025,7 +1045,7 @@ class Nexus(
 
     companion object {
         const val MAX_AGENT_STEPS = 20
-        const val PHONE_BRAIN_TIMEOUT_MS = 6000L
+        const val PHONE_BRAIN_TIMEOUT_MS = 4000L
         const val STEP_TIMEOUT_MS = 30_000L
     }
 }

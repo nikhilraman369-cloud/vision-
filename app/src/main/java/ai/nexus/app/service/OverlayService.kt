@@ -64,7 +64,7 @@ class OverlayService : Service() {
         scope.launch {
             app.chat.collect { lines ->
                 val last = lines.lastOrNull() ?: return@collect
-                if (!last.fromUser && !last.detail) showCaption(last.text)
+                if (!last.fromUser && !last.detail && !last.text.startsWith("✓")) showCaption(last.text)
             }
         }
     }
@@ -104,6 +104,7 @@ class OverlayService : Service() {
     }
 
     private var closeTarget: View? = null
+    private var quickPanel: View? = null
     private var teachingNow = false
 
     @SuppressLint("ClickableViewAccessibility")
@@ -114,7 +115,7 @@ class OverlayService : Service() {
             text = "N"; textSize = 22f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(IDLE_COLOR); setStroke((2 * dp).toInt(), Color.WHITE) }
             elevation = 8 * dp
-            contentDescription = "NEXUS assistant. Tap to talk, long press to stop, drag down to close."
+            contentDescription = "NEXUS assistant. Tap to talk, double tap for quick actions, long press to stop, drag down to close."
         }
         // Always-visible close button on the bubble.
         val close = TextView(this).apply {
@@ -137,9 +138,30 @@ class OverlayService : Service() {
             background = GradientDrawable().apply { cornerRadius = 14 * dp; setColor(0xE614141F.toInt()) }
             maxWidth = (240 * dp).toInt()
         }
+        // Quick actions, shown by double-tapping the bubble.
+        val appRef = NexusApp.get(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; visibility = View.GONE
+            setPadding((6 * dp).toInt(), (4 * dp).toInt(), (6 * dp).toInt(), (4 * dp).toInt())
+            background = GradientDrawable().apply { cornerRadius = 22 * dp; setColor(0xF214141F.toInt()) }
+        }
+        fun quick(label: String, desc: String, action: () -> Unit) = TextView(this).apply {
+            text = label; textSize = 17f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); contentDescription = desc
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF2B2B40.toInt()) }
+            setOnClickListener { action(); panel.visibility = View.GONE }
+            val sz = (40 * dp).toInt()
+            panel.addView(this, LinearLayout.LayoutParams(sz, sz).apply { leftMargin = (3 * dp).toInt(); rightMargin = (3 * dp).toInt() })
+        }
+        quick("■", "Stop") { appRef.voice.shutUp(); appRef.ask("stop") }
+        quick("↻", "Repeat last command") { appRef.ask("do the same thing again") }
+        quick("←", "Back") { appRef.ask("go back") }
+        quick("⌂", "Home") { appRef.ask("go home") }
+        quick("☰", "Open NEXUS") { startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        quickPanel = panel
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             addView(bubbleBox, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(panel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = (6 * dp).toInt() })
             addView(cap, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = (8 * dp).toInt() })
         }
         val lp = WindowManager.LayoutParams(
@@ -169,7 +191,7 @@ class OverlayService : Service() {
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean { app.voice.toggle(); return true }
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                startActivity(Intent(this@OverlayService, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true
+                quickPanel?.let { it.visibility = if (it.visibility == View.VISIBLE) View.GONE else View.VISIBLE }; return true
             }
             override fun onLongPress(e: MotionEvent) { app.voice.shutUp(); app.ask("stop") }
         })

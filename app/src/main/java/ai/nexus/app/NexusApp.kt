@@ -46,7 +46,7 @@ class NexusApp : Application() {
         memory = LongTermMemory(FileMemoryStorage(File(filesDir, "nexus-memory.json")))
         device = AndroidDevice(this)
         nexus = Nexus(device, AndroidSystemActions(this), memory, brain = buildBrain(), scope = scope)
-        voice = VoiceEngine(this) { text -> ask(text) }
+        voice = VoiceEngine(this, chooseBest = ::bestGuess) { text -> ask(text) }
         voice.init()
         applySettings()
 
@@ -81,7 +81,7 @@ class NexusApp : Application() {
                         AgentState.WAITING_FOR_USER -> "Waiting for you"
                     }
                     is NexusEvent.Error -> add(ChatLine(false, "⚠ ${e.message}", detail = true))
-                    is NexusEvent.Ack -> { add(ChatLine(false, e.text)); voice.tick() }
+                    is NexusEvent.Ack -> { add(ChatLine(false, e.text.ifBlank { "✓ Done" })); voice.tick() }
                     NexusEvent.HideBubble -> OverlayService.stop(this@NexusApp)
                     is NexusEvent.TeachingChanged -> _teaching.value = e.active
                 }
@@ -91,6 +91,17 @@ class NexusApp : Application() {
 
     /** Element list of the last non-NEXUS screen, for "Copy screen info". */
     @Volatile var lastAppScreen: String? = null
+
+    /**
+     * The speech engine gives several guesses for what you said. Take the first
+     * one NEXUS fully understands, instead of blindly trusting guess number one.
+     */
+    private fun bestGuess(options: List<String>): String {
+        fun understood(t: String) = nexus.parser.parse(t).steps.let { st ->
+            st.isNotEmpty() && st.none { it.command is ai.nexus.core.nlu.Command.Agentic || it.command is ai.nexus.core.nlu.Command.Chat }
+        }
+        return options.firstOrNull(::understood) ?: options.first()
+    }
 
     fun ask(text: String) {
         if (!text.equals("watch me", true)) scope.launch {
@@ -125,6 +136,7 @@ class NexusApp : Application() {
         voice.wakeWord = s.wakeWord
         voice.language = s.language
         voice.speechRate = s.speechRate
+        voice.accurate = s.accurateListening
     }
 
     fun onAccessibilityConnected() { scope.launch { nexus.apps.refresh() } }

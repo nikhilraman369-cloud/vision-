@@ -40,7 +40,16 @@ class PhoneBrain(private val gen: TextGenerator) {
     }
 
     /** Rough command → actions. Null when the model couldn't produce anything usable. */
+    private val busyFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** True while the model is still working on an earlier request. */
+    val busy: Boolean get() = busyFlag.get()
+
     suspend fun translate(utterance: String, screen: ScreenSnapshot?): List<Command>? {
+        if (!busyFlag.compareAndSet(false, true)) return null
+        try { return translateNow(utterance, screen) } finally { busyFlag.set(false) }
+    }
+
+    private suspend fun translateNow(utterance: String, screen: ScreenSnapshot?): List<Command>? {
         val out = gen.generate(prompt(utterance, screenSummary(screen), "command"))
         val cmds = CommandDsl.parse(out.substringBefore("<|im_end|>").lines().take(8).joinToString("\n"))
         return cmds.takeIf { it.isNotEmpty() }

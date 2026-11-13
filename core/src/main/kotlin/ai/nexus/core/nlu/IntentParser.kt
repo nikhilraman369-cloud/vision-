@@ -338,6 +338,11 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         rx("^(.+?) (?:ki|ka|ke) (?:chat|conversation|messages) (?:kholo|open karo|dikhao)$").matchEntire(s)?.let {
             return listOf(Command.OpenChat(normalizeContactRef(it.groupValues[1]), app))
         }
+        rx("^(?:open |show |go to )?(?:chat|conversation) (?:with|of) (.+)$").matchEntire(s)?.let { return listOf(Command.OpenChat(normalizeContactRef(stripArticles(it.groupValues[1])), app)) }
+        rx("^(.+?) (?:ka |ki |ke )?(?:chat|conversation|group)$").matchEntire(s)?.let {
+            val who = stripArticles(it.groupValues[1].replace(rx("^(?:open|show|go to)\\s+"), ""))
+            if (who.isNotBlank() && who.split(' ').size <= 4 && !isKnownApp(who) && !rx("^(?:my|new|this|that|a|group|the)$").matches(who)) return listOf(Command.OpenChat(normalizeContactRef(who), app))
+        }
         // find Rahul (inside a messaging app)
         if (app != null || ctx?.let { MSG_APP_NAMES.contains(it.lowercase()) } == true) {
             rx("^(?:find|search for|search|look for|open|go to) (.+)$").matchEntire(s)?.let {
