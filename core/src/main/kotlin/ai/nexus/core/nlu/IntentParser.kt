@@ -26,6 +26,12 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(it, normalized, 0.95)))
         }
 
+        // "when I say good night, turn off wifi and …" must not be split at "and".
+        Regex("^(?:when|whenever|jab) (?:i|main|mai) (?:say|bolu+n?|kahu+n?) [\"']?(.+?)[\"']?[,]? (?:then )?(?:i mean|it means|that means|you should|to|toh|tab)?\\s*(.+)$", RegexOption.IGNORE_CASE)
+            .matchEntire(TextNormalizer.stripFillers(normalized))?.let { m ->
+                val trigger = m.groupValues[1].trim(); val action = m.groupValues[2].trim()
+                if (trigger.split(' ').size <= 4) return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.Remember(trigger, action), normalized, 0.95)))
+            }
         // "done, call it morning" belongs together even with the comma.
         TEACH_STOP.matchEntire(TextNormalizer.stripFillers(normalized))?.let { m ->
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.TeachStop(clean(m.groupValues[1])), normalized, 0.95)))
@@ -141,6 +147,12 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     )
 
     private fun navigation(c: String, ctx: String?): List<Command>? {
+        rx("^(?:go |press )?back (twice|two times|three times|thrice|\\d times)$").matchEntire(c)?.let {
+            val n = when (it.groupValues[1].lowercase()) { "twice", "two times" -> 2; "thrice", "three times" -> 3; else -> it.groupValues[1].filter { ch -> ch.isDigit() }.toIntOrNull() ?: 2 }
+            return listOf(Command.Navigate(GlobalAction.BACK, n))
+        }
+        if (rx("^(?:clear|dismiss|remove|hatao) (?:all )?(?:the |my )?notifications?$|^notifications? (?:clear|hatao|saaf) (?:karo|kar do)$").matches(c)) return listOf(Command.ClearNotifications)
+        if (rx("^open (?:the |that |this )?(?:latest|last|new|recent|top)? ?notification$|^(?:open|show) (?:it|that)$").matches(c)) return listOf(Command.OpenLatestNotification)
         if (rx("^(?:go |take me |navigate |move |jump )?(?:back|backwards?)(?: (?:to|there|a page|one page|to (?:the )?(?:previous|last) (?:page|screen)|to (?:the )?search results|to results))?$").matches(c) ||
             rx("^(?:return|come back)(?: to (?:the )?(?:previous|last) (?:page|screen)| to (?:the )?search results| to results| back| there)?$").matches(c) ||
             rx("^(?:previous|last) (?:page|screen)$").matches(c) ||
@@ -226,6 +238,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     private fun screenQueries(c: String, ctx: String?): List<Command>? {
         if (rx("^(?:what'?s|what is|whats) (?:currently |now )?(?:on |in )?(?:my |the |this )?(?:screen|display|page)(?: right now)?$|^what am i (?:looking at|seeing)$|^describe (?:my |the |this )?(?:screen|page)$|^(?:screen|is screen) (?:pe|par|mein) kya hai$|^where am i$").matches(c))
             return listOf(Command.DescribeScreen)
+        if (rx("^read (?:it |this |that )?(?:out )?(?:loud|aloud)$").matches(c)) return listOf(Command.ReadScreen)
         if (rx("^read (?:out |aloud )?(?:this|the|it|that|my)?(?: ?(?:page|screen|article|post|text|out|aloud|content|message|messages|comments|it|everything))?(?: (?:out|aloud|to me))?$").matches(c) ||
             rx("^(?:padho|padh ke sunao|ye padho|isko padho|read karo|sunao)$").matches(c))
             return listOf(Command.ReadScreen)
@@ -670,6 +683,31 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     private val clock = "(\\d{1,2})(?:[:.](\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?|am|pm)?"
 
     private fun extras(c: String, ctx: String?): List<Command>? {
+        rx("^(?:put (?:the )?phone (?:on|in) |set (?:the )?phone to |switch to |go to |turn on |enable |phone ko )?(silent|vibrate|vibration|general|ring|ringer|normal|sound)(?: mode)?(?: (?:on|pe|par|karo|kar do|mein dalo|me dalo))?$").matchEntire(c)?.let {
+            val m = when (it.groupValues[1].lowercase()) { "silent" -> "silent"; "vibrate", "vibration" -> "vibrate"; else -> "normal" }
+            return listOf(Command.Ringer(m))
+        }
+        if (rx("^(?:phone )?(?:silent|chup) kar do$|^silent karo$").matches(c)) return listOf(Command.Ringer("silent"))
+        rx("^(?:navigate to|navigate me to|directions to|direction to|get directions to|take me to|drive to|route to|how do i get to|(?:mujhe )?(.+?) (?:le chalo|ka rasta batao|ka rasta dikhao|tak le chalo)|rasta (?:batao|dikhao) )(.*)$").matchEntire(c)?.let {
+            val place = clean(it.groupValues[2].ifBlank { it.groupValues[1] }) ?: return null
+            val clearlyMaps = rx("^(?:direction|navigate|route|drive|how do i get)").containsMatchIn(c)
+            if (isKnownApp(place) || (sectionOf(place) != null && !clearlyMaps)) return null
+            val mode = when { place.contains(" by walk") || place.contains(" walking") -> "w"; place.contains(" by bike") -> "b"; else -> null }
+            return listOf(Command.Directions(place.replace(rx(" (?:by (?:walk|bike|car)|walking|driving)$"), ""), mode))
+        }
+        rx("^(?:add|create|schedule|set|put|make|book)(?: an?| a new)? (?:event|meeting|appointment|calendar event|reminder in calendar)(?: (?:called|named|for|about|with|titled|:))? (.+)$").matchEntire(c)?.let {
+            var rest = it.groupValues[1]
+            var hour: Int? = null; var minute: Int? = null; var day: String? = null
+            rx("(?:\\s+at\\s+|\\s+)$clock\\s*$").find(rest)?.let { m -> timeOf(m.groupValues[1], m.groupValues[2].ifBlank { null }, m.groupValues[3].ifBlank { null })?.let { (h, mi) -> hour = h; minute = mi }; rest = rest.substring(0, m.range.first) }
+            rx("\\s+(today|tomorrow|day after tomorrow|kal|parso|aaj|on (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|next (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|week)|on \\d{1,2}(?:st|nd|rd|th)?(?: of)? \\w+)$").find(rest)?.let { m -> day = m.groupValues[1]; rest = rest.substring(0, m.range.first) }
+            val title = clean(rest.replace(rx("^(?:with|for|about)\\s+"), "").replace(rx("\\s+(?:with|for|about)$"), "")) ?: "Event"
+            return listOf(Command.CalendarEvent(title, day, hour, minute))
+        }
+        rx("^(?:take|click|capture|khicho|kheecho) (?:a |an |ek )?(selfie|photo|picture|pic|snap|video|photo lo|selfie lo)$|^(photo|selfie|video) (?:lo|le lo|kheecho|khicho|banao|record karo)$|^(?:record|shoot) (?:a )?(video)$").matchEntire(c)?.let {
+            val w = (it.groupValues[1].ifBlank { it.groupValues[2].ifBlank { it.groupValues[3] } }).lowercase()
+            return listOf(Command.TakePhoto(front = w.startsWith("selfie"), video = w.startsWith("video")))
+        }
+        if (rx("^(?:redial|call back|call (?:him|her|them) back|call again|dobara call karo|wapas call karo|phir se call karo|call the last number)$").matches(c)) return listOf(Command.Call(SAME_CONTACT))
         // Teaching / routines
         if (rx("^(?:watch me|watch and learn|learn this|let me show you|i'?ll show you|record this|dekho main kaise karta hu+n?|main dikhata hu+n?)$").matches(c)) return listOf(Command.TeachStart)
         rx("^(?:done|stop watching|stop recording|that'?s it|ho gaya|bas ho gaya|finish(?:ed)?)(?:[,.]?\\s*(?:save (?:it|this) as|call it|name it|naam rakho)\\s+(.+))?$").matchEntire(c)?.let {
@@ -747,9 +785,9 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     }
 
     private fun misc(c: String, ctx: String?): List<Command>? {
-        if (rx("^share(?: (?:it|this|that|the (?:video|reel|post|link|file|photo|page|song)))?$|^share karo$").matches(c)) return listOf(Command.Share)
+        if (rx("^share(?: (?:it|this|that|the|is|ye|yeh))?(?: (?:video|reel|post|link|file|photo|page|song|short|screenshot|image|pic))?$|^(?:ise |isko |ye )?share karo$").matches(c)) return listOf(Command.Share)
         if (rx("^copy(?: (?:it|this|that|the (?:text|link|url|message|number|address)))?$|^copy karo$").matches(c)) return listOf(Command.Copy)
-        if (rx("^paste(?: (?:it|this|that|here|the text))?$|^paste karo$").matches(c)) return listOf(Command.Paste)
+        if (rx("^paste(?: (?:it|this|that|the text))?(?: here)?$|^paste karo$").matches(c)) return listOf(Command.Paste)
         return null
     }
 

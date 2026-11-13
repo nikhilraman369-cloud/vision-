@@ -343,5 +343,39 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
         }.getOrNull()
     }
 
+    override suspend fun setRinger(mode: String): SysResult {
+        val am = context.getSystemService(AudioManager::class.java)!!
+        val nm = context.getSystemService(NotificationManager::class.java)!!
+        if (mode != "normal" && !nm.isNotificationPolicyAccessGranted) {
+            start(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+            return SysResult.NeedsPermission("dnd", "Please allow NEXUS to control Do Not Disturb (needed for silent mode), then ask again.")
+        }
+        am.ringerMode = when (mode) { "silent" -> AudioManager.RINGER_MODE_SILENT; "vibrate" -> AudioManager.RINGER_MODE_VIBRATE; else -> AudioManager.RINGER_MODE_NORMAL }
+        return SysResult.Done(when (mode) { "silent" -> "Silent mode on."; "vibrate" -> "Vibrate mode on."; else -> "Sound is back on." })
+    }
+
+    override suspend fun directions(place: String, mode: String?): SysResult {
+        val q = Uri.encode(place)
+        val uri = Uri.parse("google.navigation:q=$q" + (mode?.let { "&mode=$it" } ?: ""))
+        if (start(Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps"))) return SysResult.Done("Starting directions to $place.")
+        return if (start(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$q")))) SysResult.Done("") else SysResult.Failed("No maps app found.")
+    }
+
+    override suspend fun addCalendarEvent(title: String, startMs: Long?, durationMin: Int): SysResult {
+        val i = Intent(Intent.ACTION_INSERT).setData(android.provider.CalendarContract.Events.CONTENT_URI)
+            .putExtra(android.provider.CalendarContract.Events.TITLE, title)
+        if (startMs != null) {
+            i.putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME, startMs)
+            i.putExtra(android.provider.CalendarContract.EXTRA_EVENT_END_TIME, startMs + durationMin * 60_000L)
+        }
+        return if (start(i)) SysResult.Done("") else SysResult.Failed("No calendar app found.")
+    }
+
+    override suspend fun openCamera(front: Boolean, video: Boolean): SysResult {
+        val i = Intent(if (video) MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+        if (front) { i.putExtra("android.intent.extras.CAMERA_FACING", 1); i.putExtra("android.intent.extras.LENS_FACING_FRONT", 1); i.putExtra("android.intent.extra.USE_FRONT_CAMERA", true) }
+        return if (start(i)) SysResult.Done(if (front) "Front camera is open — say \"tap shutter\" or press the button." else "") else SysResult.Failed("No camera app found.")
+    }
+
     override suspend fun batteryPercent(): Int? = context.getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
 }

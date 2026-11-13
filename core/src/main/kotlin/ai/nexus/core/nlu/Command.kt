@@ -25,7 +25,7 @@ enum class Level { VOLUME, BRIGHTNESS }
  */
 sealed interface Command {
     data class OpenApp(val app: String) : Command
-    data class Navigate(val action: GlobalAction) : Command
+    data class Navigate(val action: GlobalAction, val times: Int = 1) : Command
     data class Scroll(val direction: Direction, val times: Int = 1) : Command
     data object NextItem : Command
     data object PreviousItem : Command
@@ -81,6 +81,13 @@ sealed interface Command {
     data object TeachStart : Command
     data class TeachStop(val name: String?) : Command
     data object HideBubble : Command
+    /** silent / vibrate / normal ringer. */
+    data class Ringer(val mode: String) : Command
+    data class Directions(val place: String, val mode: String? = null) : Command
+    data class CalendarEvent(val title: String, val dayText: String?, val hour: Int?, val minute: Int?) : Command
+    data class TakePhoto(val front: Boolean = false, val video: Boolean = false) : Command
+    data object ClearNotifications : Command
+    data object OpenLatestNotification : Command
     /** A question or conversation – answered, not executed. */
     data class Chat(val text: String) : Command
     /** A phone task the rule-based parser could not break down – handed to the LLM agent. */

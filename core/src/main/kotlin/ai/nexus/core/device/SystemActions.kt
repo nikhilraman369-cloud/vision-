@@ -67,6 +67,11 @@ interface SystemActions {
      * without opening the app. Returns null when no matching notification can be replied to.
      */
     suspend fun replyToNotification(fromName: String, text: String): SysResult? = null
+    /** "silent" | "vibrate" | "normal" */
+    suspend fun setRinger(mode: String): SysResult = SysResult.Failed("Ringer control isn't available.")
+    suspend fun directions(place: String, mode: String?): SysResult = SysResult.Failed("No maps app.")
+    suspend fun addCalendarEvent(title: String, startMs: Long?, durationMin: Int = 60): SysResult = SysResult.Failed("No calendar app.")
+    suspend fun openCamera(front: Boolean, video: Boolean): SysResult = SysResult.Failed("No camera app.")
     suspend fun batteryPercent(): Int?
     fun nowMs(): Long = System.currentTimeMillis()
 }

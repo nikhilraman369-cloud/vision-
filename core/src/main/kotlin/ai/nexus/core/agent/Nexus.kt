@@ -310,7 +310,9 @@ class Nexus(
                 return false
             }
 
-            var outcome = runCommand(cmd, step.source)
+            // A step can never hang the whole assistant.
+            var outcome = kotlinx.coroutines.withTimeoutOrNull(STEP_TIMEOUT_MS) { runCommand(cmd, step.source) }
+                ?: Outcome.Failed("That step took too long, so I moved on.", blocking = navigates(cmd))
             if (outcome is Outcome.NeedsAgent) outcome = agentFallback(step.source, cmd, outcome)
             emit(NexusEvent.StepFinished(i + 1, desc, outcome))
             ctx.lastCommand = cmd
@@ -531,7 +533,20 @@ class Nexus(
 
     private suspend fun runCommand(cmd: Command, source: String = ""): Outcome = when (cmd) {
         is Command.OpenApp -> openApp(cmd.app)
-        is Command.Navigate -> generic.handle(cmd, env)!!
+        is Command.Navigate -> { var r: Outcome = Outcome.Success(); repeat(cmd.times) { r = generic.handle(cmd, env)!! }; r }
+        is Command.Ringer -> sys(system.setRinger(cmd.mode))
+        is Command.Directions -> sys(system.directions(memory.preference(cmd.place) ?: cmd.place, cmd.mode))
+        is Command.CalendarEvent -> sys(system.addCalendarEvent(cmd.title, Dates.resolve(system.nowMs(), cmd.dayText, cmd.hour, cmd.minute))).let {
+            if (it is Outcome.Success && it.message == null) Outcome.Success("Added \"${cmd.title}\" to your calendar — check and save it.") else it
+        }
+        is Command.TakePhoto -> sys(system.openCamera(cmd.front, cmd.video))
+        Command.ClearNotifications -> {
+            device.global(GlobalAction.NOTIFICATIONS); ops.awaitChange(null, 1500)
+            val s = ops.screen()
+            val btn = s?.let { ai.nexus.core.screen.ElementFinder(it).byLabel("Clear all", "Clear all notifications", "Clear", "Manage", minScore = 0.85) }
+            if (btn != null) { ops.tap(btn, s); Outcome.Success("Cleared.") } else { device.global(GlobalAction.BACK); Outcome.Success("No notifications to clear.") }
+        }
+        Command.OpenLatestNotification -> system.recentNotifications(1).firstOrNull()?.let { n -> sys(system.openNotification(n.key)) } ?: Outcome.Failed("There are no notifications.", blocking = false)
         is Command.Call -> call(cmd)
         Command.EndCall -> sys(system.endCall())
         is Command.FindContact -> when (val r = lookupContact(cmd.name)) {
@@ -1011,6 +1026,7 @@ class Nexus(
     companion object {
         const val MAX_AGENT_STEPS = 20
         const val PHONE_BRAIN_TIMEOUT_MS = 6000L
+        const val STEP_TIMEOUT_MS = 30_000L
     }
 }
 
