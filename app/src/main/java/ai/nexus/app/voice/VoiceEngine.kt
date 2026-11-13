@@ -42,6 +42,13 @@ class VoiceEngine(
 
     /** Keep listening after each utterance and reply. */
     @Volatile var continuous = false
+
+    // Conversation mode: after each reply, keep listening for a follow-up (no wake word) for a few seconds.
+    @Volatile var followUpMs = 8000L
+    @Volatile private var conversationUntil = 0L
+    fun inConversation() = System.currentTimeMillis() < conversationUntil
+    fun startConversation() = main.post { conversationUntil = System.currentTimeMillis() + followUpMs; startListening() }
+    fun endConversation() = main.post { conversationUntil = 0; if (!continuous) stopListening() }
     @Volatile var wakeWordEnabled = false
     @Volatile var wakeWord = "hey nexus"
     @Volatile var language = "auto"
@@ -66,7 +73,7 @@ class VoiceEngine(
 
     fun startListening() = main.post {
         wantListening = true
-        if (tts?.isSpeaking == true) { tts?.stop() } // tapping the mic interrupts NEXUS
+        if (isSpeaking) { neuralQueue.clear(); cinematic?.stop(); tts?.stop() } // tapping the mic interrupts NEXUS (barge-in)
         startRecognizer()
     }
 
@@ -75,21 +82,62 @@ class VoiceEngine(
     fun toggle() { if (_state.value == VoiceState.LISTENING || _state.value == VoiceState.HEARING) stopListening() else startListening() }
 
     /** Stop talking immediately (voice interruption from the bubble or "stop"). */
-    fun shutUp() = main.post { tts?.stop(); afterSpeaking() }
+    fun shutUp() = main.post { neuralQueue.clear(); cinematic?.stop(); tts?.stop(); afterSpeaking() }
+
+    // ---------------- voice output: neural pack first, then the system British voice
+    @Volatile var cinematic: CinematicVoice? = null
+    @Volatile var useNeural = true
+    @Volatile var pitch = 0.95f
+    @Volatile var effects = true
+    @Volatile var muted = false
+    private val neuralQueue = ArrayDeque<String>()
+    @Volatile private var neuralBusy = false
+    private var britishVoice: android.speech.tts.Voice? = null
+
+    /** The system's British English male voice, if installed (Google TTS: rjs / gbd / gbb). */
+    private fun pickBritishVoice(t: TextToSpeech): android.speech.tts.Voice? = runCatching {
+        val vs = t.voices.orEmpty().filter { it.locale.language == "en" && it.locale.country == "GB" && !it.isNetworkConnectionRequired && it.features?.contains("notInstalled") != true }
+        vs.firstOrNull { v -> listOf("rjs", "gbd", "gbb", "male").any { v.name.contains(it, true) } } ?: vs.firstOrNull()
+    }.getOrNull()
 
     fun speak(text: String) = main.post {
+        if (muted || text.isBlank()) { afterSpeaking(); return@post }
+        stopRecognizer()
+        val c = cinematic
+        if (useNeural && c != null && c.ready && !Devanagari.containsDevanagari(text)) {
+            neuralQueue.addLast(text)
+            if (!neuralBusy) playNextNeural()
+            return@post
+        }
         val t = tts
         if (t == null || !ttsReady) { afterSpeaking(); return@post }
-        stopRecognizer()
-        t.language = if (Devanagari.containsDevanagari(text) || language == "hi") Locale("hi", "IN") else Locale("en", "IN")
+        if (Devanagari.containsDevanagari(text) || language == "hi") t.language = Locale("hi", "IN")
+        else {
+            if (britishVoice == null) britishVoice = pickBritishVoice(t)
+            britishVoice?.let { v -> runCatching { t.voice = v } } ?: run { t.language = Locale.UK }
+        }
         t.setSpeechRate(speechRate)
+        t.setPitch(pitch)
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "nexus-${System.nanoTime()}")
     }
 
+    private fun playNextNeural() {
+        val c = cinematic ?: return
+        val next = neuralQueue.removeFirstOrNull() ?: run { neuralBusy = false; afterSpeaking(); return }
+        neuralBusy = true
+        val ok = c.speak(next, speechRate, pitch, effects,
+            onStart = { main.post { _state.value = VoiceState.SPEAKING; stopRecognizer() } },
+            onDone = { main.post { playNextNeural() } })
+        if (!ok) { neuralBusy = false; neuralQueue.clear(); useNeural = false; speak(next) }
+    }
+
+    val isSpeaking: Boolean get() = neuralBusy || tts?.isSpeaking == true
+
     private fun afterSpeaking() {
-        if (tts?.isSpeaking == true) return
+        if (tts?.isSpeaking == true || neuralBusy) return
         _state.value = VoiceState.OFF
-        if (continuous) main.postDelayed({ if (tts?.isSpeaking != true && continuous) startRecognizer() }, 350)
+        if (inConversation()) conversationUntil = System.currentTimeMillis() + followUpMs
+        if (continuous || inConversation()) main.postDelayed({ if (!isSpeaking && (continuous || inConversation())) startRecognizer() }, 350)
     }
 
     private fun recognizerIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -142,7 +190,7 @@ class VoiceEngine(
                 main.postDelayed({ startRecognizer() }, 100)
                 return
             }
-            val retry = continuous && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT)
+            val retry = (continuous || inConversation()) && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT)
             if (retry) main.postDelayed({ startRecognizer() }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600 else 250)
         }
 
@@ -151,8 +199,11 @@ class VoiceEngine(
             _partial.value = ""
             val all = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
             val text = if (all.isEmpty()) "" else runCatching { chooseBest(all) }.getOrDefault(all.first())
-            if (text.isNotEmpty() && accept(text)) onUtterance(text)
-            else if (continuous) main.postDelayed({ startRecognizer() }, 200)
+            if (text.isNotEmpty() && accept(text)) {
+                if (inConversation()) conversationUntil = System.currentTimeMillis() + 60_000 // hold the conversation while the command runs
+                onUtterance(text)
+            }
+            else if (continuous || inConversation()) main.postDelayed({ startRecognizer() }, 200)
         }
     }
 
@@ -173,7 +224,8 @@ class VoiceEngine(
     /** A short tick + vibration for quick confirmations (faster than speaking). */
     /** After a quick confirmation: in continuous mode, listen again. (Vibration is done by HapticEngine.) */
     fun tick() = main.post {
-        if (continuous) main.postDelayed({ if (tts?.isSpeaking != true && _state.value == VoiceState.OFF) startRecognizer() }, 250)
+        if (inConversation()) conversationUntil = System.currentTimeMillis() + followUpMs
+        if (continuous || inConversation()) main.postDelayed({ if (!isSpeaking && _state.value == VoiceState.OFF) startRecognizer() }, 250)
     }
 
     fun release() {

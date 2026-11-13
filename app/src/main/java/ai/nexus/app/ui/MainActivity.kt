@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chatBox: LinearLayout
     private lateinit var chatScroll: ScrollView
     private lateinit var status: TextView
+    private lateinit var homeBox: LinearLayout
     private lateinit var setupBox: LinearLayout
     private lateinit var mic: TextView
     private lateinit var input: EditText
@@ -65,6 +66,8 @@ class MainActivity : AppCompatActivity() {
             bubbleBtn.postDelayed({ refreshBubbleBtn() }, 300)
         }
         header.addView(bubbleBtn)
+        header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
+        header.addView(button("Panel", Ui.ACCENT) { startActivity(Intent(this, PanelActivity::class.java)) })
         header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
         header.addView(button("Memory", Ui.CARD) { startActivity(Intent(this, MemoryActivity::class.java)) })
         header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
@@ -94,6 +97,8 @@ class MainActivity : AppCompatActivity() {
 
         setupBox = vbox(12)
         root.addView(setupBox, Ui.matchWrap())
+        homeBox = vbox(0).apply { setPadding(dp(12), 0, dp(12), 0) }
+        root.addView(homeBox, Ui.matchWrap())
 
         chatScroll = ScrollView(this)
         chatBox = vbox(12)
@@ -142,9 +147,51 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch { app.voice.partial.collect { if (it.isNotBlank()) status.text = "“$it”" } }
 
         if (intent?.action == Intent.ACTION_ASSIST && ensureMic()) app.voice.startListening()
+        handleAction(intent)
+        lifecycleScope.launch { app.mode.collect { renderHome() } }
+        offerVoicePack()
     }
 
-    override fun onResume() { super.onResume(); renderSetup(); refreshBubbleBtn(); app.ensureHandsFree(this) }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleAction(intent) }
+
+    override fun onResume() { super.onResume(); renderSetup(); renderHome(); refreshBubbleBtn(); app.ensureHandsFree(this) }
+
+    /** The bubble's stuck card sends "Type instruction" here. */
+    private fun handleAction(i: Intent?) {
+        if (i?.getStringExtra("action") != "instruct") return
+        i.removeExtra("action")
+        val e = EditText(this).apply { hint = "e.g. tap the three dots, then Settings" }
+        android.app.AlertDialog.Builder(this).setTitle("Tell NEXUS what to do").setView(e)
+            .setPositiveButton("Go") { _, _ -> val t = e.text.toString().trim(); if (t.isNotEmpty()) { app.clearStuck(); app.nexus.stuckInstruction(t) ; moveTaskToBack(true) } }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Mode, next deadline and top tasks at a glance. */
+    private fun renderHome() {
+        if (!::homeBox.isInitialized) return
+        homeBox.removeAllViews()
+        val now = System.currentTimeMillis()
+        val d = app.life.data
+        val top = ai.nexus.core.life.Briefs.rank(app.life.store.openTasks(), d.activeMode, now).take(3)
+        if (d.activeMode == null && top.isEmpty()) return
+        val card = vbox(0).apply { background = Ui.rounded(Ui.CARD, dp(12).toFloat()); setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        d.activeMode?.let { m -> card.addView(label("● $m mode is on", 14f, Ui.OK, bold = true)) }
+        top.forEach { t -> card.addView(label("• ${t.title}" + (t.dueMs?.let { " — " + ai.nexus.core.life.Briefs.whenText(it, now) } ?: ""), 13.5f)) }
+        card.setOnClickListener { startActivity(Intent(this, PanelActivity::class.java).putExtra("section", "tasks")) }
+        homeBox.addView(card, Ui.matchWrap().apply { topMargin = dp(4); bottomMargin = dp(4) })
+    }
+
+    /** First run: offer the butler voice once. */
+    private fun offerVoicePack() {
+        val prefs = getSharedPreferences("nexus", MODE_PRIVATE)
+        val id = app.memory.settings.voicePack
+        if (prefs.getBoolean("voiceOffered", false) || app.voicePacks.installed(id)) return
+        prefs.edit().putBoolean("voiceOffered", true).apply()
+        android.app.AlertDialog.Builder(this).setTitle("Give NEXUS its butler voice?")
+            .setMessage("A natural British male voice that runs fully offline (about 60 MB, one-time download). You can change it later in Panel → Voice.")
+            .setPositiveButton("Download") { _, _ -> app.voicePacks.download(id, wifiOnly = false) { app.loadVoice() } }
+            .setNegativeButton("Later", null).show()
+    }
 
     /**
      * Copies what NEXUS saw on the last app screen plus the recent conversation,

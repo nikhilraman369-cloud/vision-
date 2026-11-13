@@ -63,7 +63,26 @@ class Nexus(
     @Volatile var brain: Brain?,
     private val scope: CoroutineScope,
     private val skills: List<AppSkill> = listOf(YouTubeSkill(), InstagramSkill(), WhatsAppSkill()),
+    /** Tasks, modes, skills, study, notifications, diagnostics (null in minimal setups/tests). */
+    val life: ai.nexus.core.life.LifeEngine? = null,
 ) {
+    /** Speech post-correction against known names, apps and past mishearings. */
+    val vocab = ai.nexus.core.voice.VocabularyCorrector()
+    private val boss: String get() = memory.settings.addressAs.ifBlank { "Boss" }
+
+    /** Refresh the speech vocabulary (call when contacts/apps/memory change). */
+    fun refreshVocabulary(extraNames: Collection<String>) {
+        val mem = memory.items
+        val names = extraNames + mem.filter { it.kind == MemoryKind.CONTACT_ALIAS || it.kind == MemoryKind.APP_ALIAS }.flatMap { listOfNotNull(it.key, it.value) }
+        vocab.update(names, mem.filter { it.kind == MemoryKind.MISHEARING && it.key != null }.associate { it.key!! to it.value })
+    }
+
+    /** A step NEXUS couldn't do and is waiting to be taught. */
+    data class Stuck(val command: Command, val source: String, val rest: List<ParsedStep>, val app: String?, val description: String)
+    @Volatile var stuck: Stuck? = null
+        private set
+    @Volatile private var teachTrigger: String? = null
+
     /** Free on-device model for rough commands (null until downloaded/loaded). */
     @Volatile var phoneBrain: PhoneBrain? = null
 
@@ -91,8 +110,16 @@ class Nexus(
     fun submit(utterance: String): Job = scope.launch { process(utterance) }
 
     suspend fun process(utterance: String) {
-        val text = utterance.trim()
+        val text = runCatching { vocab.correct(utterance.trim()) }.getOrDefault(utterance.trim())
         if (text.isEmpty()) return
+        // Answers to "Boss, I'm stuck…": skip / teach me / or a typed instruction.
+        stuck?.let { st ->
+            val n = Fuzzy.normalize(text)
+            when {
+                n in setOf("skip", "skip it", "skip this", "skip this step", "chhodo", "aage badho") -> { stuckSkip(); return }
+                n in setOf("teach me", "i will show you", "i ll show you", "let me show you", "let me teach you", "watch me", "main dikhata hoon", "sikhata hoon") -> { stuckTeach(); return }
+            }
+        }
         val parsed = parser.parse(text)
 
         // Stop / wait / continue must work while a task is running.
@@ -134,6 +161,14 @@ class Nexus(
             var request = if (expanded != null) parser.parse(expanded) else parsed
             if (request.steps.isEmpty()) return@withLock
 
+            // A skill you taught NEXUS always wins over improvising.
+            life?.let { l ->
+                ai.nexus.core.life.SkillMatcher.match(key, l.data.skills)?.let { hit ->
+                    ctx.lastUtterance = text
+                    runJob { runSkill(hit, text) }
+                    return@withLock
+                }
+            }
             // A routine taught with "watch me": "do morning routine" / "morning routine".
             routineFor(key)?.let { cmds ->
                 ctx.lastUtterance = text
@@ -177,6 +212,22 @@ class Nexus(
                 }
                 setState(AgentState.IDLE)
                 if (newSteps.all { it.command is Command.Agentic || it.command is Command.Chat }) lastMiss = key to System.currentTimeMillis()
+                // Still not understood and no cloud AI: repeat back and offer the closest command, or ask to be taught.
+                if (!cloudReady && newSteps.size == 1 && newSteps[0].command is Command.Agentic) {
+                    val guess = CommandCatalog.closest(norm, life?.data?.skills?.flatMap { it.triggers }.orEmpty() + memory.items.filter { it.kind == MemoryKind.LEARNED }.mapNotNull { it.key })
+                    if (guess != null) {
+                        ask("$boss, I heard \"$text\". Did you mean \"$guess\"?", listOf("yes", "no")) { idx ->
+                            if (idx == 0) {
+                                val steps = parser.parse(guess).steps
+                                if (runSteps(steps) && steps.all { CommandDsl.toLine(it.command) != null }) memory.remember(MemoryKind.LEARNED, key, CommandDsl.toLines(steps.map { it.command }))
+                            } else say("Okay $boss, say it another way, or say \"teach me\" and show me once.")
+                        }
+                    } else {
+                        teachTrigger = text
+                        say("$boss, I heard \"$text\" but I don't know that one yet. Say it another way, or say \"teach me\" and show me once.")
+                    }
+                    return@withLock
+                }
                 request = ai.nexus.core.nlu.ParsedRequest(text, norm, newSteps)
                 if (request.isChat) { runJob { chat(text) }; return@withLock }
             }
@@ -188,10 +239,12 @@ class Nexus(
             }
 
             if (request.isChat) {
+                if (maybeCaptureFact(text)) return@withLock
                 runJob { chat(text) }
                 return@withLock
             }
             ctx.lastUtterance = text
+            if (memory.settings.spokenAcks && (request.steps.size > 1 || request.steps.any { slow(it.command) })) say("On it, $boss.")
             val finalSteps = request.steps
             val missed = lastMiss?.takeIf { (_, at) -> System.currentTimeMillis() - at < 15_000 }?.first
             runJob {
@@ -284,6 +337,9 @@ class Nexus(
 
     @Volatile private var pendingAnswer: String? = null
 
+    /** Ask the user something from outside a command (e.g. "Shall I reply …?"); the next answer goes to [onChoose]. */
+    fun prompt(question: String, options: List<String>, onChoose: suspend (Int) -> Unit) = ask(question, options, onChoose)
+
     private fun ask(question: String, options: List<String> = emptyList(), onChoose: suspend (Int) -> Unit) {
         ctx.pendingChoice = PendingChoice(question, options, onChoose)
         setState(AgentState.WAITING_FOR_USER)
@@ -328,10 +384,27 @@ class Nexus(
             }
 
             // A step can never hang the whole assistant.
-            var outcome = kotlinx.coroutines.withTimeoutOrNull(STEP_TIMEOUT_MS) { runCommand(cmd, step.source) }
-                ?: Outcome.Failed("That step took too long, so I moved on.", blocking = navigates(cmd))
+            val t0 = System.currentTimeMillis()
+            val learnedSkill = if (steps.size > 1) life?.let { l -> ai.nexus.core.life.SkillMatcher.match(Fuzzy.normalize(step.source), l.data.skills) } else null
+            var outcome = kotlinx.coroutines.withTimeoutOrNull(STEP_TIMEOUT_MS) {
+                if (learnedSkill != null) executeSkill(learnedSkill) else runCommand(cmd, step.source)
+            } ?: Outcome.Failed("That step took too long, so I moved on.", blocking = navigates(cmd))
             if (outcome is Outcome.NeedsAgent) outcome = agentFallback(step.source, cmd, outcome)
             emit(NexusEvent.StepFinished(i + 1, desc, outcome))
+            logStep(step.source, desc, outcome, System.currentTimeMillis() - t0)
+            // Can't do it and nobody else can: stop and ask to be taught, instead of guessing.
+            if (life != null && memory.settings.askWhenStuck && screenStep(cmd) &&
+                (outcome is Outcome.NeedsAgent || (outcome is Outcome.Failed && outcome.message.startsWith("I couldn't find") || outcome is Outcome.Failed && outcome.message.startsWith("I don't see")))
+            ) {
+                val app = ops.current()?.packageName
+                val appName = app?.let { p -> apps.labelFor(p) } ?: "this app"
+                stuck = Stuck(cmd, step.source, steps.drop(i + 1), app, desc)
+                interruptedSteps = emptyList()
+                emit(NexusEvent.Stuck(desc, appName, step.source))
+                setState(AgentState.WAITING_FOR_USER)
+                say("$boss, I'm stuck at \"$desc\" in $appName. Say \"teach me\" and show me once, or \"skip\".")
+                return false
+            }
             ctx.lastCommand = cmd
             executed += cmd
 
@@ -365,15 +438,171 @@ class Nexus(
         ctx.lastRequestCommands = steps.map { it.command }
         when {
             notes.isNotEmpty() -> say(if (total > 1) "Done, with a note: " + notes.joinToString(" ") else notes.joinToString(" "))
-            total > 1 -> acknowledge("Done.")
+            total > 1 -> acknowledge("Done, $boss.")
             else -> if (needsAck(steps[0].command)) acknowledge(ack(steps[0].command)) else if (!saidSomething) emit(NexusEvent.Ack(""))
         }
         return notes.isEmpty()
     }
 
-    /** Short confirmations: a tick/vibration (quiet mode) instead of speech, to stay fast. */
+    /** Short confirmations: always a tick/vibration; spoken too unless you chose silent confirmations. */
     private fun acknowledge(text: String) {
-        if (memory.settings.quietAcks) { ctx.addTurn("assistant", text); emit(NexusEvent.Ack(text)) } else say(text)
+        if (memory.settings.spokenAcks && !memory.settings.quietAcks) { say(text); emit(NexusEvent.Ack("")) }
+        else if (memory.settings.spokenAcks) { ctx.addTurn("assistant", text); emit(NexusEvent.Ack(text)); emit(NexusEvent.Reply(text, memory.settings.speakResponses)) }
+        else { ctx.addTurn("assistant", text); emit(NexusEvent.Ack(text)) }
+    }
+
+    private fun slow(c: Command) = c is Command.OpenApp || c is Command.Search || c is Command.PlayMedia || c is Command.ShareTo ||
+        c is Command.SendMessage || c is Command.OpenChat || c is Command.OpenResult || c is Command.Agentic || c is Command.StartMode
+
+    private fun screenStep(c: Command) = c is Command.Tap || c is Command.OpenResult || c is Command.GoTo || c is Command.OpenComments ||
+        c is Command.Write || c is Command.Search || c is Command.OpenChat || c is Command.React || c is Command.Submit || c is Command.Share ||
+        c is Command.ShareTo || c is Command.FindOnScreen || c is Command.Agentic || c is Command.NextItem
+
+    private suspend fun logStep(request: String, desc: String, o: Outcome, ms: Long) {
+        val l = life ?: return
+        val snap = runCatching { ops.current() }.getOrNull()
+        val screen = snap?.let { sn -> sn.packageName.substringAfterLast('.') + ": " + sn.nodes.filter { it.label.isNotBlank() && it.bounds.area > 0 }.take(10).joinToString(" | ") { it.label.take(25) } } ?: ""
+        l.store.log(ai.nexus.core.life.DiagEntry(request = ctx.lastUtterance ?: request, step = desc, app = snap?.packageName ?: "",
+            result = o::class.simpleName ?: "", detail = o.message ?: "", durationMs = ms, screen = screen))
+    }
+
+    // ================================================================ self-learning: stuck → teach → skill
+
+    fun stuckSkip() {
+        val st = stuck ?: return
+        stuck = null
+        say("Skipped.")
+        if (st.rest.isNotEmpty()) runJob { runSteps(st.rest) }
+    }
+
+    fun stuckCancel() { stuck = null; setState(AgentState.IDLE); say("Cancelled, $boss.") }
+
+    /** Re-teach (or teach) a skill for [trigger] from the app's Skills / Diagnostics screens. */
+    fun teach(trigger: String) {
+        teachTrigger = trigger
+        recording = mutableListOf(); recordingLastPkg = null
+        emit(NexusEvent.TeachingChanged(true))
+        say("Show me \"$trigger\", $boss. Do it yourself, then tap Done.")
+    }
+
+    /** Start recording the user's own taps for the stuck step. */
+    fun stuckTeach() {
+        val st = stuck ?: return
+        teachTrigger = st.source
+        recording = mutableListOf(); recordingLastPkg = st.app
+        emit(NexusEvent.TeachingChanged(true))
+        say("Show me, $boss. Do this step yourself, then tap Done.")
+    }
+
+    /** "Type instruction": run the user's words for the stuck step, and remember them for next time. */
+    fun stuckInstruction(text: String) {
+        val st = stuck ?: return
+        stuck = null
+        runJob {
+            val steps = parser.parse(text).steps
+            val ok = runSteps(steps)
+            if (ok && steps.all { CommandDsl.toLine(it.command) != null }) memory.remember(MemoryKind.LEARNED, Fuzzy.normalize(st.source), CommandDsl.toLines(steps.map { it.command }))
+            if (ok && st.rest.isNotEmpty()) runSteps(st.rest)
+        }
+    }
+
+    /** Done button while teaching. */
+    fun finishTeaching(name: String? = null) {
+        scope.launch { process(if (name != null) "done, call it $name" else "done") }
+    }
+
+    private suspend fun runSkill(hit: ai.nexus.core.life.SkillMatcher.Hit, text: String) {
+        setState(AgentState.EXECUTING)
+        if (memory.settings.spokenAcks && hit.skill.steps.size > 1) say("On it, $boss.")
+        val o = executeSkill(hit)
+        logStep(text, "Skill: ${hit.skill.name}", o, 0)
+        when (o) {
+            is Outcome.Success -> acknowledge(o.message ?: "Done, $boss.")
+            else -> {
+                if (memory.settings.askWhenStuck) {
+                    val app = ops.current()?.packageName
+                    stuck = Stuck(Command.Agentic(text), text, emptyList(), app, hit.skill.name)
+                    emit(NexusEvent.Stuck(hit.skill.name, app?.let { apps.labelFor(it) } ?: "this app", text))
+                    setState(AgentState.WAITING_FOR_USER)
+                    say("$boss, my \"${hit.skill.name}\" skill failed: ${o.message}. Say \"teach me\" to show me again, or \"skip\".")
+                } else say(o.message ?: "That didn't work.")
+            }
+        }
+    }
+
+    /** Replays a learned recipe through observe → act → verify, with selector fallbacks. */
+    private suspend fun executeSkill(hit: ai.nexus.core.life.SkillMatcher.Hit): Outcome {
+        val l = life ?: return Outcome.Failed("No skills store.")
+        val skill = hit.skill
+        val fill = { t: String? -> ai.nexus.core.life.SkillMatcher.fill(t, hit.slots) }
+        for ((i, st) in skill.steps.withIndex()) {
+            awaitNotPaused()
+            val ok: Boolean = when (st.action) {
+                "open_app" -> {
+                    val pkg = st.pkg ?: fill(st.selector?.text)?.let { apps.resolve(it)?.packageName }
+                    ensureApp(pkg, fill(st.selector?.text)) !is Outcome.Failed
+                }
+                "tap", "long_press" -> {
+                    val sel = st.selector
+                    val snap = ops.waitForReady(memory.patience(st.pkg ?: ctx.currentPackage, 6000)) { sn -> findBySelector(sn, sel, fill) != null }
+                    val node = snap?.let { findBySelector(it, sel, fill) }
+                    when {
+                        node != null && st.action == "tap" -> ops.tapReliably(node, snap) != null
+                        node != null -> device.longClick(node) || device.longPressAt(node.bounds.centerX, node.bounds.centerY)
+                        sel?.xPct != null && sel.yPct != null && (skill.lowConfidence || (sel.text == null && sel.desc == null && sel.viewId == null)) -> {
+                            val sn = ops.screen(); device.tapAt(((sel.xPct) * (sn?.screenWidth ?: 1080)).toInt(), ((sel.yPct) * (sn?.screenHeight ?: 2400)).toInt()).also { ops.awaitChange(sn, 1500) }
+                        }
+                        else -> false
+                    }
+                }
+                "type" -> ops.typeText(fill(st.text) ?: "") !is Outcome.Failed
+                "scroll" -> { ops.scrollAndWait(if (st.direction == "up") ai.nexus.core.device.Direction.UP else ai.nexus.core.device.Direction.DOWN); true }
+                "back" -> { val sn = ops.current(); device.global(GlobalAction.BACK); ops.awaitChange(sn, 1500); true }
+                "home" -> { device.global(GlobalAction.HOME); true }
+                else -> true
+            }
+            if (!ok) {
+                l.store.updateSkill(skill.id) { it.copy(failures = it.failures + 1, lastUsedMs = System.currentTimeMillis()) }
+                val what = st.selector?.let { fill(it.text) ?: it.desc ?: it.viewId?.substringAfter(":id/") } ?: st.action
+                return Outcome.Failed("I couldn't find \"$what\" (step ${i + 1})", blocking = true)
+            }
+        }
+        l.store.updateSkill(skill.id) { it.copy(successes = it.successes + 1, lastUsedMs = System.currentTimeMillis()) }
+        return Outcome.Success()
+    }
+
+    private fun findBySelector(s: ai.nexus.core.screen.ScreenSnapshot, sel: ai.nexus.core.life.Selector?, fill: (String?) -> String?): ai.nexus.core.screen.UiNode? {
+        sel ?: return null
+        val text = fill(sel.text)
+        val nodes = s.nodes.filter { it.bounds.area > 0 }
+        sel.viewId?.let { vid -> nodes.filter { it.viewId == vid }.let { c -> (if (text != null) c.firstOrNull { n -> n.label.equals(text, true) } else null) ?: c.singleOrNull() }?.let { return it } }
+        text?.let { t -> nodes.firstOrNull { it.text.equals(t, true) || it.contentDescription.equals(t, true) }?.let { return it } }
+        sel.desc?.let { d -> nodes.firstOrNull { it.contentDescription.equals(d, true) }?.let { return it } }
+        text?.let { t -> ai.nexus.core.screen.ElementFinder(s).byLabel(t, minScore = 0.8)?.let { return it } }
+        if (sel.cls != null && sel.xPct != null && sel.yPct != null) {
+            val x = sel.xPct * s.screenWidth; val y = sel.yPct * s.screenHeight
+            nodes.filter { it.className == sel.cls && s.clickableTarget(it).clickable }
+                .minByOrNull { kotlin.math.hypot(it.bounds.centerX - x.toDouble(), it.bounds.centerY - y.toDouble()) }
+                ?.takeIf { kotlin.math.hypot(it.bounds.centerX - x.toDouble(), it.bounds.centerY - y.toDouble()) < s.screenWidth * 0.08 }?.let { return it }
+        }
+        return null
+    }
+
+    /** "My gym time is 6 PM" said in passing: offer to remember it. */
+    private fun maybeCaptureFact(text: String): Boolean {
+        val mode = memory.settings.autoCapture
+        if (mode == "off" || !memory.enabled) return false
+        val m = Regex("^(?:my|mera|meri|mere) (.+?) (?:is|are|hai|hain) (.+)$", RegexOption.IGNORE_CASE).matchEntire(text.trim().trimEnd('.'))
+            ?: Regex("^(.+?) is my (.+)$", RegexOption.IGNORE_CASE).matchEntire(text.trim().trimEnd('.'))?.let { mm -> Regex("^(my .+?) is (.+)$").matchEntire("my ${mm.groupValues[2]} is ${mm.groupValues[1]}") }
+            ?: return false
+        val key = "my " + m.groupValues[1].trim().removePrefix("my ")
+        val value = m.groupValues[2].trim()
+        if (LongTermMemory.looksSensitive(value) || value.split(' ').size > 12) return false
+        if (mode == "always") { memory.remember(MemoryKind.PREFERENCE, key, value); say("Noted, $boss."); return true }
+        ask("Shall I remember that your ${key.removePrefix("my ")} is $value, $boss?", listOf("yes", "no")) { idx ->
+            if (idx == 0) { memory.remember(MemoryKind.PREFERENCE, key, value); say("Remembered.") } else say("Okay, I won't.")
+        }
+        return true
     }
 
     // ================================================================ screen first
@@ -429,37 +658,51 @@ class Nexus(
 
     // ================================================================ teaching ("watch me")
 
-    @Volatile private var recording: MutableList<Command>? = null
+    @Volatile private var recording: MutableList<ai.nexus.core.life.RecipeStep>? = null
     @Volatile private var recordingLastPkg: String? = null
     val isTeaching: Boolean get() = recording != null
 
-    /** Fed by the accessibility service while teaching: what the user tapped or typed. */
-    fun recordUserAction(pkg: String, label: String?, typed: String?) {
+    /** Rich recording from the accessibility service: selectors for every tap and typed text. */
+    fun recordStep(step: ai.nexus.core.life.RecipeStep) {
         val rec = recording ?: return
         synchronized(rec) {
-            val launcher = pkg in ai.nexus.core.screen.Packages.LAUNCHERS
-            if (typed != null) {
-                if (rec.lastOrNull() is Command.Write) rec.removeAt(rec.lastIndex)
-                rec += Command.Write(typed, false)
-                return
+            if (step.action == "type") {
+                if (rec.lastOrNull()?.action == "type") rec.removeAt(rec.lastIndex)
+                if (LongTermMemory.looksSensitive(step.text ?: "")) return // never record secrets
             }
-            val l = label?.trim()?.takeIf { it.isNotBlank() && it.length <= 60 } ?: return
-            if (launcher) rec += Command.OpenApp(l)
-            else if (Fuzzy.normalize(l) in setOf("send", "post", "reply") && rec.lastOrNull() is Command.Write) {
-                val w = rec.removeAt(rec.lastIndex) as Command.Write
-                rec += w.copy(submit = true)
-            } else rec += Command.Tap(l)
-            recordingLastPkg = pkg
+            if (step.action == "open_app" && rec.lastOrNull()?.action == "open_app" && rec.last().pkg == step.pkg) return
+            if (step.action == "scroll" && rec.lastOrNull()?.action == "scroll" && rec.last().direction == step.direction) return
+            rec += step
+            step.pkg?.let { recordingLastPkg = it }
         }
+    }
+
+    /** Simple recording API (label / typed text). */
+    fun recordUserAction(pkg: String, label: String?, typed: String?) {
+        if (typed != null) { recordStep(ai.nexus.core.life.RecipeStep("type", pkg, text = typed)); return }
+        val l = label?.trim()?.takeIf { it.isNotBlank() && it.length <= 60 } ?: return
+        if (pkg in ai.nexus.core.screen.Packages.LAUNCHERS) recordStep(ai.nexus.core.life.RecipeStep("open_app", null, ai.nexus.core.life.Selector(text = l)))
+        else recordStep(ai.nexus.core.life.RecipeStep("tap", pkg, ai.nexus.core.life.Selector(text = l)))
     }
 
     /** Called when the foreground app changes during teaching. */
     fun recordAppSwitch(pkg: String, appLabel: String?) {
         val rec = recording ?: return
-        if (pkg in ai.nexus.core.screen.Packages.LAUNCHERS || pkg == recordingLastPkg) return
+        if (pkg in ai.nexus.core.screen.Packages.LAUNCHERS || pkg == recordingLastPkg || pkg == selfPackage) return
         synchronized(rec) {
-            if (rec.lastOrNull() !is Command.OpenApp && appLabel != null) rec += Command.OpenApp(appLabel)
+            if (rec.lastOrNull()?.action != "open_app") rec += ai.nexus.core.life.RecipeStep("open_app", pkg, ai.nexus.core.life.Selector(text = appLabel))
             recordingLastPkg = pkg
+        }
+    }
+
+    private fun stepsToCommands(steps: List<ai.nexus.core.life.RecipeStep>): List<Command> = steps.mapNotNull { st ->
+        when (st.action) {
+            "open_app" -> (st.selector?.text ?: st.pkg)?.let { Command.OpenApp(it) }
+            "tap" -> (st.selector?.text ?: st.selector?.desc)?.let { Command.Tap(it) }
+            "long_press" -> (st.selector?.text ?: st.selector?.desc)?.let { Command.Tap(it, long = true) }
+            "type" -> st.text?.let { Command.Write(it, false) }
+            "back" -> Command.Navigate(GlobalAction.BACK)
+            else -> null
         }
     }
 
@@ -473,6 +716,46 @@ class Nexus(
         val key = Fuzzy.normalize(name)
         memory.remember(MemoryKind.ROUTINE, key, CommandDsl.toLines(cmds))
         return Outcome.Success("Saved \"$name\" with ${cmds.size} steps. Just say \"$name\" to run it.")
+    }
+
+    private suspend fun lifeCommand(cmd: Command): Outcome {
+        val l = life ?: return Outcome.Failed("That feature isn't set up.", blocking = false)
+        val r = l.handle(cmd) ?: return Outcome.Failed("I couldn't do that.", blocking = false)
+        for (line in r.runLines) {
+            CommandDsl.parse(line).forEach { c -> kotlinx.coroutines.withTimeoutOrNull(15_000) { runCommand(c) } }
+        }
+        r.askQuiz?.let { card ->
+            ask("${card.subject}: ${card.question}") { _ ->
+                val answer = pendingAnswer.orEmpty(); pendingAnswer = null
+                say(l.answerQuiz(card, answer))
+            }
+            return Outcome.Success()
+        }
+        if (cmd is Command.StartMode || cmd is Command.StopMode) emit(NexusEvent.ModeChanged(l.data.activeMode))
+        return r.outcome
+    }
+
+    /** "No, I meant Rahul Sharma": fix the name (and remember it), then redo the last action. */
+    private suspend fun meantInstead(text: String): Outcome {
+        val last = ctx.lastCommand
+        val lastName = when (last) {
+            is Command.Call -> last.contact; is Command.SendMessage -> last.contact; is Command.OpenChat -> last.contact
+            is Command.FindContact -> last.name; else -> null
+        }
+        if (last != null && lastName != null && text.split(' ').size <= 4 && parser.parse(text).steps.all { it.command is Command.Chat || it.command is Command.Agentic || it.command is Command.OpenApp }) {
+            memory.remember(MemoryKind.CONTACT_ALIAS, lastName, text)
+            ctx.currentContactName = text
+            return runCommand(withContact(last, text))
+        }
+        // Otherwise: the last request was misheard/misunderstood. Learn it and do the right thing.
+        val prev = ctx.lastUtterance
+        val steps = parser.parse(text).steps
+        val ok = runSteps(steps)
+        if (ok && prev != null) {
+            if (steps.all { CommandDsl.toLine(it.command) != null }) memory.remember(MemoryKind.LEARNED, Fuzzy.normalize(prev), CommandDsl.toLines(steps.map { it.command }))
+            if (prev.split(' ').size <= 4 && text.split(' ').size <= 4) memory.remember(MemoryKind.MISHEARING, Fuzzy.normalize(prev), text)
+        }
+        return Outcome.Success()
     }
 
     private suspend fun awaitNotPaused() {
@@ -513,7 +796,7 @@ class Nexus(
         else -> c
     }
 
-    @Volatile private var pendingRoutine: List<Command>? = null
+    @Volatile private var pendingRoutine: List<ai.nexus.core.life.RecipeStep>? = null
 
     private fun humanDuration(sec: Int): String = when {
         sec % 3600 == 0 -> "${sec / 3600} hour${if (sec == 3600) "" else "s"}"
@@ -615,7 +898,26 @@ class Nexus(
         is Command.SetTimer -> sys(system.setTimer(cmd.seconds, cmd.label)).let {
             if (it is Outcome.Success && it.message == null) Outcome.Success("Timer set for ${humanDuration(cmd.seconds)}${cmd.label?.let { l -> " — $l" } ?: ""}.") else it
         }
-        is Command.Note -> if (memory.remember(MemoryKind.NOTE, null, cmd.text) != null) Outcome.Success("Noted.") else Outcome.Failed("I couldn't save that note.", blocking = false)
+        is Command.Note -> life?.let { lifeCommand(cmd) } ?: if (memory.remember(MemoryKind.NOTE, null, cmd.text) != null) Outcome.Success("Noted.") else Outcome.Failed("I couldn't save that note.", blocking = false)
+        is Command.Capture -> life?.let { lifeCommand(cmd) } ?: runCommand(Command.Note(cmd.text))
+        is Command.StartMode, is Command.StopMode, is Command.AddExpense, is Command.AddTask, Command.ListTasks, is Command.CompleteTask,
+        Command.WhatNow, is Command.Brief, is Command.QuizMe, is Command.AddFlashcard, is Command.AllowApp ->
+            life?.let { lifeCommand(cmd) } ?: Outcome.Failed("That feature isn't set up.", blocking = false)
+        is Command.WhatDoYouKnow -> {
+            val t = Fuzzy.normalize(cmd.topic)
+            val hits = memory.items.filter { it.kind != MemoryKind.LEARNED && it.kind != MemoryKind.MISHEARING }
+                .filter { Fuzzy.normalize("${it.key ?: ""} ${it.value}").let { h -> h.contains(t) || t.split(' ').filter { w -> w.length > 2 }.any { w -> h.contains(w) } } }
+            Outcome.Success(if (hits.isEmpty()) "I don't know anything about ${cmd.topic} yet, $boss." else "About ${cmd.topic}: " + hits.take(6).joinToString("; ") { (it.key?.let { k -> "$k: " } ?: "") + it.value } + ".")
+        }
+        is Command.MeantInstead -> meantInstead(cmd.text)
+        is Command.PreferApp -> {
+            val who = if (cmd.contact == IntentParser.SAME_CONTACT) ctx.currentContactName ?: ctx.currentContact?.name else cmd.contact
+            if (who == null) Outcome.Asked("For whom, $boss?") else { memory.remember(MemoryKind.PREFERENCE, "app for ${Fuzzy.normalize(who)}", cmd.app); Outcome.Success("Okay, I'll always use ${cmd.app} for $who.") }
+        }
+        is Command.Toggle -> when (cmd.what) {
+            "notifications" -> { memory.updateSettings { it.copy(notificationWatching = cmd.on) }; Outcome.Success(if (cmd.on) "Watching notifications again." else "Paused notification watching.") }
+            else -> { memory.updateSettings { it.copy(voiceMuted = !cmd.on) }; emit(NexusEvent.VoiceMuted(!cmd.on)); Outcome.Success(if (cmd.on) "Voice back on, $boss." else null) }
+        }
         Command.ReadNotes -> memory.items.filter { it.kind == MemoryKind.NOTE }.let { n ->
             Outcome.Success(if (n.isEmpty()) "You have no notes." else "Your notes: " + n.takeLast(10).joinToString(". ") { it.value })
         }
@@ -623,18 +925,36 @@ class Nexus(
         is Command.Calculate -> Calc.evaluate(cmd.expression)?.let { Outcome.Success("${cmd.expression.trim()} = ${Calc.format(it)}") }
             ?: Outcome.Failed("I couldn't work that out.", blocking = false)
         Command.TeachStart -> {
-            recording = mutableListOf(); recordingLastPkg = ops.screen()?.packageName
-            emit(NexusEvent.TeachingChanged(true))
-            Outcome.Success("I'm watching. Do the task yourself, then tap me and say \"done, call it\" and a name.")
+            if (stuck != null) { stuckTeach(); Outcome.Success() } else {
+                if (teachTrigger == null) teachTrigger = lastMiss?.first
+                recording = mutableListOf(); recordingLastPkg = ops.screen()?.packageName
+                emit(NexusEvent.TeachingChanged(true))
+                Outcome.Success("I'm watching, $boss. Do the task yourself, then tap Done${if (teachTrigger == null) " and give it a name" else ""}.")
+            }
         }
         is Command.TeachStop -> {
             val rec = recording?.toList()
             recording = null
             emit(NexusEvent.TeachingChanged(false))
+            val trigger = teachTrigger
             when {
                 rec == null -> Outcome.Failed("I wasn't watching. Say \"watch me\" first.", blocking = false)
-                rec.isEmpty() -> Outcome.Failed("I didn't see any steps.", blocking = false)
-                cmd.name != null -> saveRoutine(cmd.name, rec)
+                rec.isEmpty() -> { teachTrigger = null; Outcome.Failed("I didn't see any steps.", blocking = false) }
+                cmd.name != null || trigger != null -> {
+                    val name = cmd.name ?: trigger!!
+                    teachTrigger = null
+                    if (life != null) {
+                        val built = ai.nexus.core.life.SkillMatcher.build(name, trigger ?: name, rec)
+                        // Re-teaching an existing skill keeps the old version for rollback.
+                        val existing = life.data.skills.firstOrNull { sk -> sk.triggers.any { it in built.triggers } || Fuzzy.normalize(sk.name) == Fuzzy.normalize(name) }
+                        val skill = existing?.copy(steps = built.steps, triggers = (existing.triggers + built.triggers).distinct(), version = existing.version + 1,
+                            history = (existing.history + listOf(existing.steps)).takeLast(5), failures = 0) ?: built
+                        life.store.saveSkill(skill)
+                        val st = stuck; stuck = null
+                        if (st != null && st.rest.isNotEmpty()) scope.launch { runSteps(st.rest) }
+                        Outcome.Success("Learned \"${skill.name}\" with ${rec.size} steps. I'll do it myself next time, $boss.")
+                    } else saveRoutine(name, stepsToCommands(rec))
+                }
                 else -> { pendingRoutine = rec; Outcome.Asked("Got ${rec.size} steps. What should I call it?") }
             }
         }
@@ -730,8 +1050,8 @@ class Nexus(
         return screenCommand(cmd)
     }
 
-    private fun targetMessagingApp(app: String?): String? {
-        val a = app?.lowercase()
+    private fun targetMessagingApp(app: String?, contact: String? = null): String? {
+        val a = app?.lowercase() ?: contact?.let { c -> memory.preference("app for ${Fuzzy.normalize(c)}")?.lowercase() }
         return when {
             a == "sms" || a == "text" || a == "messages" -> "sms"
             a == "whatsapp" -> Packages.WHATSAPP
@@ -745,7 +1065,7 @@ class Nexus(
     }
 
     private suspend fun sendMessage(cmd: Command.SendMessage): Outcome {
-        val app = targetMessagingApp(cmd.app)
+        val app = targetMessagingApp(cmd.app, cmd.contact)
         val text = cmd.text ?: return Outcome.Asked("What should I say${cmd.contact?.let { " to $it" } ?: ""}?")
         if (cmd.send && memory.settings.confirmBeforeSending && pendingConfirmed != cmd) {
             val who = cmd.contact ?: "them"

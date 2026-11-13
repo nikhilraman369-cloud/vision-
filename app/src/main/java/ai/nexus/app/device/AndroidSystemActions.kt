@@ -377,6 +377,16 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
         return if (start(i)) SysResult.Done(if (front) "Front camera is open — say \"tap shutter\" or press the button." else "") else SysResult.Failed("No camera app found.")
     }
 
+    /** All contact display names (for speech correction). */
+    suspend fun allContactNames(): List<String> = withContext(Dispatchers.IO) {
+        if (!has(Manifest.permission.READ_CONTACTS)) return@withContext emptyList()
+        val out = LinkedHashSet<String>()
+        context.contentResolver.query(ContactsContract.Contacts.CONTENT_URI, arrayOf(ContactsContract.Contacts.DISPLAY_NAME), null, null, null)?.use { c ->
+            while (c.moveToNext() && out.size < 3000) c.getString(0)?.let { out += it }
+        }
+        out.toList()
+    }
+
     override suspend fun isMusicActive(): Boolean? {
         val am = context.getSystemService(AudioManager::class.java) ?: return null
         if (am.isMusicActive) return true

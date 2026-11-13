@@ -10,6 +10,10 @@ enum class MemoryKind {
     FACT, PREFERENCE, CONTACT_ALIAS, APP_ALIAS, SHORTCUT, CORRECTION,
     /** A phrase the phone brain worked out once, cached as action lines so it's instant next time. */
     LEARNED,
+    /** Short summary of a past conversation, for continuity. */
+    EPISODE,
+    /** A mishearing the user corrected: key = heard, value = meant. */
+    MISHEARING,
     /** A task taught with "watch me", stored as action lines. */
     ROUTINE,
     NOTE,
@@ -25,6 +29,13 @@ data class MemoryItem(
     val createdMs: Long = System.currentTimeMillis(),
     val updatedMs: Long = createdMs,
     val uses: Int = 0,
+    /** 1 (trivia) … 5 (core fact). */
+    val importance: Int = 3,
+    val pinned: Boolean = false,
+    val confidence: Double = 1.0,
+    /** "told" | "learned" | "notification" */
+    val source: String = "told",
+    val lastUsedMs: Long = 0,
 )
 
 @Serializable
@@ -54,6 +65,37 @@ data class UserSettings(
     val useEarbudMic: Boolean = true,
     /** Offline speech model: "en-in" (Indian English) or "hi" (Hindi). */
     val speechModel: String = "en-in",
+    /** How NEXUS addresses you. */
+    val addressAs: String = "Boss",
+    /** Speak a short "On it, Boss." / "Done." instead of only vibrating. */
+    val spokenAcks: Boolean = true,
+    /** When a step can't be done, stop and ask to be taught. */
+    val askWhenStuck: Boolean = true,
+    /** "ask" | "always" | "off": saving facts you mention in passing. */
+    val autoCapture: String = "ask",
+    /** Seconds the conversation stays open after a reply. */
+    val followUpSeconds: Int = 8,
+    val morningBrief: String = "07:30",
+    val eveningReview: String = "21:30",
+    val briefsEnabled: Boolean = true,
+    val quietStart: String = "23:00",
+    val quietEnd: String = "07:00",
+    /** Voice output: "neural" (downloaded voice pack) or "system". */
+    val voiceEngine: String = "neural",
+    val voicePack: String = "piper-en_GB-alan-medium",
+    val voicePitch: Float = 0.95f,
+    val voiceEffects: Boolean = true,
+    val earcons: Boolean = true,
+    val wifiOnlyDownloads: Boolean = true,
+    /** LLM planner: "local" (phone brain) | "claude" (API key) | "off". */
+    val llmProvider: String = "local",
+    val bubbleSide: String = "right",
+    val bubbleY: Float = 0.35f,
+    val bubbleOpacity: Float = 0.85f,
+    val bubbleSize: Int = 52,
+    val bubbleHideFullscreen: Boolean = true,
+    val notificationWatching: Boolean = true,
+    val voiceMuted: Boolean = false,
     /** Use the online speech engine (more accurate, especially Hinglish and names). */
     val accurateListening: Boolean = false,
     val sendScreenshotsToCloud: Boolean = false,
@@ -154,6 +196,52 @@ class LongTermMemory(private val storage: MemoryStorage) {
     }
 
     fun forget(id: String) = mutate { d -> d.copy(items = d.items.filterNot { it.id == id }) }
+
+    fun setPinned(id: String, pinned: Boolean) = mutate { d -> d.copy(items = d.items.map { if (it.id == id) it.copy(pinned = pinned) else it }) }
+
+    fun add(item: MemoryItem): MemoryItem? {
+        if (!enabled || looksSensitive(item.value)) return null
+        mutate { d -> d.copy(items = d.items + item) }
+        return item
+    }
+
+    /**
+     * Memories relevant to [query], best first, within [budgetChars]: word
+     * overlap, importance, pinned, and recency. Marks them as used.
+     */
+    fun relevant(query: String, budgetChars: Int = 1500, now: Long = System.currentTimeMillis()): List<MemoryItem> {
+        if (!enabled) return emptyList()
+        val q = Fuzzy.normalize(query).split(' ').filter { it.length > 2 }.toSet()
+        val scored = data.items.filter { it.kind != MemoryKind.LEARNED && it.kind != MemoryKind.MISHEARING }.map { m ->
+            val words = Fuzzy.normalize("${m.key ?: ""} ${m.value}").split(' ').toSet()
+            val overlap = q.count { it in words }.toDouble()
+            val ageDays = (now - maxOf(m.updatedMs, m.lastUsedMs)) / 86_400_000.0
+            m to (overlap * 3 + m.importance + (if (m.pinned) 4 else 0) - minOf(ageDays / 30.0, 3.0))
+        }.filter { it.second > 2.5 || it.first.pinned }.sortedByDescending { it.second }
+        val out = ArrayList<MemoryItem>(); var used = 0
+        for ((m, _) in scored) { val len = (m.key?.length ?: 0) + m.value.length + 4; if (used + len > budgetChars) break; out += m; used += len }
+        if (out.isNotEmpty()) mutate { d -> d.copy(items = d.items.map { i -> if (out.any { it.id == i.id }) i.copy(lastUsedMs = now) else i }) }
+        lastUsed = out
+        return out
+    }
+
+    /** What was used in the last answer (shown in the Memory screen). */
+    @Volatile var lastUsed: List<MemoryItem> = emptyList()
+        private set
+
+    /** Merge exact or near-duplicate memories; pinned ones are always kept. */
+    fun mergeDuplicates(): Int {
+        val keep = ArrayList<MemoryItem>(); var merged = 0
+        for (m in data.items.sortedByDescending { it.pinned }) {
+            val dup = keep.firstOrNull { k -> k.kind == m.kind && Fuzzy.normalize("${k.key} ${k.value}").let { a -> Fuzzy.similarity(a, Fuzzy.normalize("${m.key} ${m.value}")) > 0.92 } }
+            if (dup != null && !m.pinned) merged++ else keep += m
+        }
+        if (merged > 0) mutate { d -> d.copy(items = keep) }
+        return merged
+    }
+
+    fun exportJson(): String = json.encodeToString(MemoryData.serializer(), data)
+    fun importJson(text: String) = mutate { json.decodeFromString(MemoryData.serializer(), text) }
 
     /** Forget items matching free text ("forget that I like pizza"). Returns how many were removed. */
     fun forgetMatching(text: String): Int {

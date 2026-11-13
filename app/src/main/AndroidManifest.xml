@@ -26,6 +26,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Needed to list launchable apps and to hand off searches / links to other apps. -->
     <queries>
@@ -98,6 +101,15 @@
         <activity android:name=".ui.MemoryActivity" android:exported="false" android:label="NEXUS memory" />
         <activity android:name=".ui.RoutinesActivity" android:exported="false" android:label="Routines" />
         <activity android:name=".ui.HelpActivity" android:exported="false" android:label="What can I say?" />
+        <activity android:name=".ui.PanelActivity" android:exported="false" android:label="NEXUS control panel" />
+
+        <receiver android:name=".life.LifeReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".service.NexusAccessibilityService"

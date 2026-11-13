@@ -133,6 +133,35 @@ class SettingsActivity : AppCompatActivity() {
         toggle("Quick confirmations (tick + vibration instead of saying \"Done\")", s.quietAcks) { v -> update { it.copy(quietAcks = v) } }
         toggle("Return to the app I was in after sending or sharing in the background", s.returnAfterTasks) { v -> update { it.copy(returnAfterTasks = v) } }
 
+        section("AI BRAIN FOR HARD REQUESTS")
+        box.addView(label("Simple commands always run instantly on the phone. Pick what handles unusual ones. Claude needs your own API key (paid, online); only the minimum text of each request is sent.", 12.5f, Ui.MUTED))
+        val providers = listOf("local" to "Phone brain (free, offline)", "claude" to "Claude (online, your API key)", "off" to "Off (rules only)")
+        Spinner(this).apply {
+            adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, providers.map { it.second })
+            setSelection(providers.indexOfFirst { it.first == s.llmProvider }.coerceAtLeast(0))
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                    if (providers[pos].first != app.memory.settings.llmProvider) { update { it.copy(llmProvider = providers[pos].first) }; app.rebuildBrain() }
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+            box.addView(this, Ui.matchWrap())
+        }
+        val keyField = EditText(this).apply {
+            hint = if (app.apiKey != null) "Claude API key saved (type to replace)" else "Claude API key (sk-ant-…)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setTextColor(Ui.TEXT); setHintTextColor(Ui.MUTED)
+        }
+        box.addView(keyField, Ui.matchWrap())
+        val modelField = EditText(this).apply { setText(app.model); hint = "Model"; setTextColor(Ui.TEXT); isSingleLine = true }
+        box.addView(modelField, Ui.matchWrap())
+        box.addView(button("Save AI settings", Ui.CARD) {
+            keyField.text.toString().trim().takeIf { it.isNotEmpty() }?.let { app.apiKey = it }
+            modelField.text.toString().trim().takeIf { it.isNotEmpty() }?.let { app.model = it }
+            app.rebuildBrain(); keyField.setText("")
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+        }, Ui.matchWrap())
+
         section("VOICE")
         val langs = listOf("auto" to "Auto (English + Hinglish)", "en" to "English", "hi" to "Hindi (हिन्दी)")
         val spinner = Spinner(this).apply {

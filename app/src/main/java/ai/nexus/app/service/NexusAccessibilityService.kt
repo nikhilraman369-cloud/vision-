@@ -72,11 +72,36 @@ class NexusAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) event.packageName?.toString()
             ?.takeIf { it != "com.vivo.card" && it != "com.android.systemui" }?.let { foregroundPackage = it }
         recordForTeaching(event)
+        guardDistractions(event)
         // Re-index the screen 100 ms after it stops changing, so commands find nodes instantly.
         cacheHandler.removeCallbacks(refreshCache)
         cacheHandler.postDelayed(refreshCache, 100)
         lastEventAt = System.currentTimeMillis()
         changes.value = changes.value + 1
+    }
+
+    private var lastNudge = 0L
+    private var nudges = 0
+
+    /** Study / Writing modes: opening a blocked app gets a short nudge and sends you back. */
+    private fun guardDistractions(e: AccessibilityEvent) {
+        if (e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = e.packageName?.toString() ?: return
+        val app = NexusApp.get(this)
+        if (!app.life.isBlocked(pkg)) return
+        val now = System.currentTimeMillis()
+        if (now - lastNudge < 4000) return
+        nudges = if (now - lastNudge > 30 * 60_000) 1 else nudges + 1
+        lastNudge = now
+        val boss = app.memory.settings.addressAs
+        val mode = app.life.data.activeMode ?: "focus"
+        val msg = when (nudges) {
+            1 -> "$boss, you're in $mode mode. Back to it."
+            2 -> "$boss, that's the second time. Your task is waiting."
+            else -> "$boss, if you really need it, say \"allow ${pkg.substringAfterLast('.')} for 10 minutes\" and tell me why."
+        }
+        performGlobalAction(GLOBAL_ACTION_HOME)
+        app.speakProactive(msg)
     }
 
     /** While the user says "watch me", turn their taps and typing into a routine. */
@@ -89,16 +114,31 @@ class NexusAccessibilityService : AccessibilityService() {
                 val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrNull()
                 if (packageManager.getLaunchIntentForPackage(pkg) != null) nexus.recordAppSwitch(pkg, label)
             }
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+            AccessibilityEvent.TYPE_VIEW_CLICKED, AccessibilityEvent.TYPE_VIEW_LONG_CLICKED -> {
                 val src = e.source
-                val label = e.text?.joinToString(" ")?.takeIf { it.isNotBlank() }
-                    ?: e.contentDescription?.toString()
-                    ?: src?.let { n -> n.text?.toString() ?: n.contentDescription?.toString() ?: firstLabel(n) }
-                nexus.recordUserAction(pkg, label, null)
+                if (pkg in ai.nexus.core.screen.Packages.LAUNCHERS) {
+                    nexus.recordUserAction(pkg, e.text?.joinToString(" ")?.takeIf { it.isNotBlank() } ?: src?.let { it.text?.toString() ?: it.contentDescription?.toString() }, null)
+                    return
+                }
+                // Robust selectors: id, text, description, class and position on screen.
+                val r = Rect(); src?.getBoundsInScreen(r)
+                val dm = resources.displayMetrics
+                val text = (src?.text?.toString() ?: e.text?.joinToString(" "))?.takeIf { it.isNotBlank() } ?: src?.let { firstLabel(it) }
+                val sel = ai.nexus.core.life.Selector(
+                    viewId = src?.viewIdResourceName, text = text?.take(60), desc = src?.contentDescription?.toString()?.take(60),
+                    cls = src?.className?.toString(),
+                    xPct = if (src != null) r.centerX().toFloat() / dm.widthPixels else null, yPct = if (src != null) r.centerY().toFloat() / dm.heightPixels else null,
+                )
+                nexus.recordStep(ai.nexus.core.life.RecipeStep(if (e.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED) "long_press" else "tap", pkg, sel))
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                if (e.isPassword || e.source?.isPassword == true) return // never record passwords
                 val typed = e.text?.joinToString("")?.takeIf { it.isNotBlank() } ?: return
-                nexus.recordUserAction(pkg, null, typed)
+                nexus.recordStep(ai.nexus.core.life.RecipeStep("type", pkg, text = typed))
+            }
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                val rec = e.scrollDeltaY
+                if (rec != 0) nexus.recordStep(ai.nexus.core.life.RecipeStep("scroll", pkg, direction = if (rec > 0) "down" else "up"))
             }
         }
     }

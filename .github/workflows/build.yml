@@ -24,9 +24,45 @@ jobs:
       - name: Unit tests (core brain)
         run: ./gradlew :core:test --no-daemon
 
+      # The neural butler voice runtime (sherpa-onnx, Apache-2.0) is not on Maven,
+      # so fetch its Kotlin API + arm64 native libraries from its GitHub releases.
+      - name: Fetch neural voice runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          mkdir -p app/src/main/java/com/k2fsa/sherpa/onnx app/src/main/jniLibs/arm64-v8a /tmp/sherpa
+          ok=0
+          tags=$(gh release list -R k2-fsa/sherpa-onnx --limit 30 --json tagName -q '.[].tagName' | grep -E '^v1\.[0-9]+\.[0-9]+$')
+          for tag in $tags v1.12.14 v1.12.10 v1.12.0 v1.11.5; do
+            rm -rf /tmp/sherpa/*
+            gh release download "$tag" -R k2-fsa/sherpa-onnx -p "sherpa-onnx-$tag-android.tar.bz2" -D /tmp/sherpa || continue
+            curl -fsSL "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/$tag/sherpa-onnx/kotlin-api/Tts.kt" -o /tmp/sherpa/Tts.kt || continue
+            tar -xjf /tmp/sherpa/*.tar.bz2 -C /tmp/sherpa || continue
+            libs=$(find /tmp/sherpa -path '*arm64-v8a*' -name '*.so')
+            [ -n "$libs" ] || continue
+            cp $libs app/src/main/jniLibs/arm64-v8a/
+            cp /tmp/sherpa/Tts.kt app/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt
+            echo "Using sherpa-onnx $tag"; echo "VOICE_RUNTIME=sherpa-onnx $tag" >> "$GITHUB_ENV"; ok=1; break
+          done
+          if [ "$ok" != 1 ]; then
+            echo "sherpa-onnx unavailable; using fallback stub"
+            cp ci/sherpa-stub/Tts.kt app/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt
+            rm -f app/src/main/jniLibs/arm64-v8a/*.so
+            echo "VOICE_RUNTIME=system voice only (neural runtime not bundled)" >> "$GITHUB_ENV"
+          fi
+          ls -la app/src/main/jniLibs/arm64-v8a/
+          exit 0
+
       - name: Build debug APK
         run: |
-          ./gradlew :app:assembleDebug --no-daemon
+          if ! ./gradlew :app:assembleDebug --no-daemon; then
+            echo "Build with the neural runtime failed; retrying with the fallback stub"
+            cp ci/sherpa-stub/Tts.kt app/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt
+            rm -f app/src/main/jniLibs/arm64-v8a/*.so
+            echo "VOICE_RUNTIME=system voice only (neural runtime failed to compile)" >> "$GITHUB_ENV"
+            ./gradlew :app:assembleDebug --no-daemon
+          fi
           cp app/build/outputs/apk/debug/app-debug.apk nexus.apk
 
       - uses: actions/upload-artifact@v4
@@ -44,6 +80,7 @@ jobs:
           body: |
             Download **nexus.apk** below and open it on your Android phone to install.
             Built from commit ${{ github.sha }}.
+            Voice runtime: ${{ env.VOICE_RUNTIME }}
           files: nexus.apk
           make_latest: true
           prerelease: false

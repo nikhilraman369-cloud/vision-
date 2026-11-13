@@ -27,6 +27,10 @@ sealed interface NexusEvent {
     data class Ack(val text: String) : NexusEvent
     data object HideBubble : NexusEvent
     data class TeachingChanged(val active: Boolean) : NexusEvent
+    /** NEXUS can't do a step: show "Boss, I'm stuck" with Teach me / Type instruction / Skip / Cancel. */
+    data class Stuck(val step: String, val app: String, val source: String) : NexusEvent
+    data class ModeChanged(val mode: String?) : NexusEvent
+    data class VoiceMuted(val muted: Boolean) : NexusEvent
 }
 
 enum class AgentState { IDLE, THINKING, EXECUTING, PAUSED, WAITING_FOR_USER }

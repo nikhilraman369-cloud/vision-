@@ -29,6 +29,10 @@ class AppDirectory(private val device: DeviceController, private val memory: Lon
         return installed.any { Fuzzy.normalize(it.label) == n }
     }
 
+    fun labelFor(pkg: String): String = installed.firstOrNull { it.packageName == pkg }?.label ?: pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+
+    fun allLabels(): List<String> = installed.map { it.label }
+
     suspend fun resolve(name: String): InstalledApp? {
         val n = Fuzzy.normalize(name)
         if (n.isBlank()) return null

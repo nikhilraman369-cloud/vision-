@@ -32,6 +32,10 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
                 val trigger = m.groupValues[1].trim(); val action = m.groupValues[2].trim()
                 if (trigger.split(' ').size <= 4) return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.Remember(trigger, action), normalized, 0.95)))
             }
+        // "No, I meant Rahul Sharma" is one correction, not "no" + something else.
+        Regex("^(?:no|nahi|nope)[,.!]?\\s+(?:i meant|i mean|i said|mera matlab(?: tha)?)\\s+(.+)$", RegexOption.IGNORE_CASE).matchEntire(TextNormalizer.stripFillers(normalized))?.let { m ->
+            return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.MeantInstead(m.groupValues[1].trim().trimEnd('.')), normalized, 0.95)))
+        }
         // "done, call it morning" belongs together even with the comma.
         TEACH_STOP.matchEntire(TextNormalizer.stripFillers(normalized))?.let { m ->
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.TeachStop(clean(m.groupValues[1])), normalized, 0.95)))
@@ -141,7 +145,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     }
 
     private val rules: List<(String, String?) -> List<Command>?> = listOf(
-        ::extras, ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
+        ::life, ::extras, ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
         ::messaging, ::calls, ::toggles, ::levels, ::settings, ::notifications, ::files, ::media, ::results,
         ::sections, ::search, ::sendText, ::write, ::tap, ::misc, ::memory, ::url, ::openApp,
     )
@@ -687,6 +691,54 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     private val unitRx = "(seconds?|secs?|minutes?|mins?|min|hours?|hrs?|hr|ghante|ghanta|minute)"
     private val clock = "(\\d{1,2})(?:[:.](\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?|am|pm)?"
 
+    /** Productivity, modes, study, memory questions, corrections. */
+    private fun life(c: String, ctx: String?): List<Command>? {
+        rx("^(?:no[,.!]?\\s+)?(?:i meant|i mean|i said|mera matlab(?: tha)?|matlab)\\s+(.+?)(?:\\s+tha)?$").matchEntire(c)?.let { return listOf(Command.MeantInstead(it.groupValues[1].trim())) }
+        rx("^(?:always|hamesha) (?:use|message|text|contact) (whatsapp|instagram|telegram|sms|messages|text) (?:for|to|with) (.+)$").matchEntire(c)?.let {
+            return listOf(Command.PreferApp(normalizeContactRef(it.groupValues[2].trim()), it.groupValues[1].lowercase()))
+        }
+        rx("^(?:what do you know about|what do you remember about|tell me what you know about|(.+?) ke baare mein kya pata hai) ?(.*)$").matchEntire(c)?.let {
+            val topic = it.groupValues[2].ifBlank { it.groupValues[1] }.trim()
+            if (topic.isNotBlank()) return listOf(Command.WhatDoYouKnow(topic))
+        }
+        if (rx("^(?:what should i do(?: now| next)?|what now|what'?s next|ab kya karu+n?|kya karna hai(?: ab)?|what'?s my next task)$").matches(c)) return listOf(Command.WhatNow)
+        if (rx("^(?:show|read|list|what are|tell me)(?: me)? (?:my |all )?(?:open |pending )?(?:tasks|to ?dos|to do list|deadlines)(?: for today)?$|^(?:my )?(?:tasks|deadlines)$|^kya kya karna hai$").matches(c)) return listOf(Command.ListTasks)
+        rx("^(?:mark |set )?(?:the )?(.+?) (?:as )?(?:done|complete|completed|finished|ho gaya)$|^(?:i )?(?:finished|completed|did) (?:the )?(.+)$").matchEntire(c)?.let {
+            val t = it.groupValues[1].ifBlank { it.groupValues[2] }.trim()
+            if (t.isNotBlank() && !rx("^(?:it|that|this|all)$").matches(t)) return listOf(Command.CompleteTask(t))
+        }
+        rx("^(?:add (?:a )?task|new task|create (?:a )?task|task|add to my (?:tasks|to ?do(?: list)?))[: ]+(.+?)(?: (?:by|due|before|till) (.+))?$").matchEntire(c)?.let {
+            return listOf(Command.AddTask(it.groupValues[1].trim(), it.groupValues[2].trim().ifBlank { null }))
+        }
+        if (rx("^(?:morning brief(?:ing)?|good morning brief|give me (?:my |the )?(?:morning )?brief(?:ing)?|brief me|plan my day|aaj ka plan)$").matches(c)) return listOf(Command.Brief("morning"))
+        if (rx("^(?:evening review|review my day|how did i do today|day review)$").matches(c)) return listOf(Command.Brief("evening"))
+        if (rx("^(?:weekly review|how was my week|week review)$").matches(c)) return listOf(Command.Brief("weekly"))
+        if (rx("^(?:what did i miss|daily digest|catch me up|any updates|kya miss hua)$").matches(c)) return listOf(Command.Brief("digest"))
+        rx("^(?:quiz me|test me|ask me questions)(?: on| in| about)? ?(.*)$").matchEntire(c)?.let { return listOf(Command.QuizMe(clean(it.groupValues[1]))) }
+        rx("^(?:add (?:a )?flash ?card|new flash ?card|flash ?card)(?: for| in)? ?([a-z ]+?)?[: ]+(.+?)\\s*(?:\\||answer is|answer:|ans:)\\s*(.+)$").matchEntire(c)?.let {
+            return listOf(Command.AddFlashcard(clean(it.groupValues[1]), it.groupValues[2].trim(), it.groupValues[3].trim()))
+        }
+        rx("^(?:allow|let me use|unblock|open) (.+?) for (\\d+) ?(?:minutes?|mins?)(?: because .+)?$").matchEntire(c)?.let {
+            return listOf(Command.AllowApp(it.groupValues[1].trim(), it.groupValues[2].toInt()))
+        }
+        rx("^(?:spent|paid|kharch(?:a|e) kiye?|expense)\\b.*\\d.*$|^.*\\b\\d+ ?(?:rs|rupees|₹|rupaye)\\b.*(?:on|for|pe|par)\\b.*$").matchEntire(c)?.let { return listOf(Command.AddExpense(c)) }
+        rx("^(?:note|capture|idea|jot|save (?:this )?idea|add to (?:my )?inbox)\\s*[:,-]?\\s+(.+)$").matchEntire(c)?.let { return listOf(Command.Capture(it.groupValues[1].trim())) }
+        if (rx("^(?:pause|stop|turn off) (?:watching )?notifications?(?: watching| reading)?$").matches(c)) return listOf(Command.Toggle("notifications", false))
+        if (rx("^(?:resume|start|turn on) (?:watching )?notifications?(?: watching| reading)?$").matches(c)) return listOf(Command.Toggle("notifications", true))
+        if (rx("^(?:mute (?:your )?voice|be quiet|stop talking|chup|chup raho|not now|abhi nahi)$").matches(c)) return listOf(Command.Toggle("voice", false))
+        if (rx("^(?:unmute (?:your )?voice|speak again|talk to me|you can talk)$").matches(c)) return listOf(Command.Toggle("voice", true))
+        rx("^(?:stop|end|exit|leave|turn off|quit)(?: the)? ?([a-z]+)? mode$|^([a-z]+) mode (?:off|band karo|khatam)$").matchEntire(c)?.let {
+            val name = it.groupValues[1].ifBlank { it.groupValues[2] }.trim().ifBlank { null }
+            if (name == null || !rx("^(?:dark|night|airplane|aeroplane|flight|silent|vibrate|dnd)$").matches(name)) return listOf(Command.StopMode(name))
+        }
+        rx("^(?:start |begin |enter |switch to |turn on |activate |go into )?(?:the )?([a-z]+(?: [a-z]+)?) mode(?: (?:for|on) (.+?))?(?: (?:on|chalu karo|shuru karo|lagao))?$").matchEntire(c)?.let {
+            val name = it.groupValues[1].trim()
+            if (!rx("^(?:dark|night|airplane|aeroplane|flight|silent|vibrate|vibration|ring|ringer|normal|reading|power saving|battery saver|do not disturb|dnd|incognito|driving|sound|general)$").matches(name))
+                return listOf(Command.StartMode(name, clean(it.groupValues[2])))
+        }
+        return null
+    }
+
     private fun extras(c: String, ctx: String?): List<Command>? {
         // Spatial grid: "tap top right", "double tap center", "long press bottom left corner"
         rx("^(double ?tap|double click|long ?press|press and hold|tap|click|touch|press)(?: on| at)?(?: the)? (top|upper|middle|center|centre|bottom|lower)?(?:[ -](left|right|middle|center|centre))?(?: corner| side| part)?(?: of (?:the )?screen)?$").matchEntire(c)?.let {
@@ -730,7 +782,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         }
         if (rx("^(?:redial|call back|call (?:him|her|them) back|call again|dobara call karo|wapas call karo|phir se call karo|call the last number)$").matches(c)) return listOf(Command.Call(SAME_CONTACT))
         // Teaching / routines
-        if (rx("^(?:watch me|watch and learn|learn this|let me show you|i'?ll show you|record this|dekho main kaise karta hu+n?|main dikhata hu+n?)$").matches(c)) return listOf(Command.TeachStart)
+        if (rx("^(?:watch me|watch and learn|learn this|teach me|let me teach you|i will teach you|i'?ll teach you|sikhata hu+n?|let me show you|i'?ll show you|record this|dekho main kaise karta hu+n?|main dikhata hu+n?)$").matches(c)) return listOf(Command.TeachStart)
         rx("^(?:done|stop watching|stop recording|that'?s it|ho gaya|bas ho gaya|finish(?:ed)?)(?:[,.]?\\s*(?:save (?:it|this) as|call it|name it|naam rakho)\\s+(.+))?$").matchEntire(c)?.let {
             return listOf(Command.TeachStop(clean(it.groupValues[1])))
         }

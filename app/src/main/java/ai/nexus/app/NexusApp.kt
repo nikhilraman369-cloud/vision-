@@ -28,6 +28,17 @@ data class ChatLine(val fromUser: Boolean, val text: String, val detail: Boolean
 class NexusApp : Application() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     lateinit var memory: LongTermMemory
+    lateinit var life: ai.nexus.core.life.LifeEngine
+    lateinit var systemActions: AndroidSystemActions
+    lateinit var voicePacks: ai.nexus.app.voice.VoicePackManager
+    lateinit var cinematic: ai.nexus.app.voice.CinematicVoice
+    val sounds = ai.nexus.app.voice.SoundFx()
+
+    private val _stuck = MutableStateFlow<NexusEvent.Stuck?>(null)
+    /** Set while NEXUS is waiting to be taught; the bubble shows the stuck card. */
+    val stuck: StateFlow<NexusEvent.Stuck?> = _stuck
+    private val _mode = MutableStateFlow<String?>(null)
+    val mode: StateFlow<String?> = _mode
     lateinit var nexus: Nexus
     lateinit var voice: VoiceEngine
     lateinit var device: AndroidDevice
@@ -48,9 +59,13 @@ class NexusApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        memory = LongTermMemory(FileMemoryStorage(File(filesDir, "nexus-memory.json")))
+        // Everything is stored encrypted on the phone (AES-GCM, key in the Android Keystore).
+        memory = LongTermMemory(ai.nexus.app.util.EncryptedStorage(File(filesDir, "nexus-memory.json")))
+        life = ai.nexus.core.life.LifeEngine(ai.nexus.core.life.LifeStore(ai.nexus.app.util.EncryptedStorage(File(filesDir, "nexus-life.json"))), memory)
+        installCrashLog()
         device = AndroidDevice(this)
-        nexus = Nexus(device, AndroidSystemActions(this), memory, brain = buildBrain(), scope = scope)
+        systemActions = AndroidSystemActions(this)
+        nexus = Nexus(device, systemActions, memory, brain = buildBrain(), scope = scope, life = life)
         voice = VoiceEngine(this, chooseBest = ::bestGuess) { text -> ask(text) }
         voice.init()
         applySettings()
@@ -67,6 +82,14 @@ class NexusApp : Application() {
         voskModels = ai.nexus.app.voice.VoskModelManager(this, scope)
         voskModels.refresh(memory.settings.speechModel)
         nexus.selfPackage = packageName
+        _mode.value = life.data.activeMode
+        voicePacks = ai.nexus.app.voice.VoicePackManager(this, scope)
+        cinematic = ai.nexus.app.voice.CinematicVoice(this, voicePacks)
+        voice.cinematic = cinematic
+        loadVoice()
+        life.store.cleanup()
+        scope.launch { refreshVocabulary() }
+        runCatching { ai.nexus.app.life.ReminderScheduler.scheduleAll(this@NexusApp) }
 
         scope.launch {
             nexus.events.collect { e ->
@@ -91,9 +114,12 @@ class NexusApp : Application() {
                         AgentState.WAITING_FOR_USER -> "Waiting for you"
                     }
                     is NexusEvent.Error -> add(ChatLine(false, "⚠ ${e.message}", detail = true))
-                    is NexusEvent.Ack -> { add(ChatLine(false, e.text.ifBlank { "✓ Done" })); haptics.success(); voice.tick() }
+                    is NexusEvent.Ack -> { add(ChatLine(false, e.text.ifBlank { "✓ Done" })); haptics.success(); if (memory.settings.earcons) sounds.success(); voice.tick() }
                     NexusEvent.HideBubble -> OverlayService.stop(this@NexusApp)
-                    is NexusEvent.TeachingChanged -> _teaching.value = e.active
+                    is NexusEvent.TeachingChanged -> { _teaching.value = e.active; if (!e.active) _stuck.value = null }
+                    is NexusEvent.Stuck -> { _stuck.value = e; haptics.error(); if (memory.settings.earcons) sounds.error() }
+                    is NexusEvent.ModeChanged -> _mode.value = e.mode
+                    is NexusEvent.VoiceMuted -> { voice.muted = e.muted; if (e.muted) voice.shutUp() }
                 }
             }
         }
@@ -114,7 +140,16 @@ class NexusApp : Application() {
     }
 
     /** Bubble tap / mic button: open hands-free's command window if it's on, else tap-to-talk. */
-    fun talk() { handsFreeActivate?.invoke() ?: voice.toggle() }
+    fun talk() { if (memory.settings.earcons) sounds.activate(); handsFreeActivate?.invoke() ?: voice.toggle() }
+
+    /** Double-tap: a continuous conversation (keeps listening after each reply for a few seconds). */
+    fun startConversation() { if (memory.settings.earcons) sounds.activate(); handsFreeActivate?.invoke() ?: voice.startConversation() }
+
+    /** "Note" chip: whatever you say next is captured to the inbox. */
+    @Volatile var pendingPrefix: String? = null
+    fun talkWithPrefix(prefix: String) { pendingPrefix = prefix; talk() }
+
+    fun rebuildBrain() { nexus.brain = buildBrain() }
 
     fun notifyHandsFreeError(message: String) { add(ChatLine(false, "⚠ $message", detail = true)); haptics.error() }
 
@@ -125,7 +160,56 @@ class NexusApp : Application() {
         if (!want && ai.nexus.app.voice.NexusVoiceService.instance != null) ai.nexus.app.voice.NexusVoiceService.stop(context)
     }
 
+    /** Speak something NEXUS starts on its own (reminders, briefs, insights). */
+    fun speakProactive(text: String) {
+        add(ChatLine(false, text))
+        if (memory.settings.speakResponses && !memory.settings.voiceMuted) voice.speak(text)
+    }
+
+    fun clearStuck() { _stuck.value = null }
+
+    /** Load the chosen neural voice pack if it's downloaded. */
+    fun loadVoice() {
+        val s = memory.settings
+        voice.useNeural = s.voiceEngine == "neural"
+        if (s.voiceEngine == "neural" && voicePacks.installed(s.voicePack)) cinematic.load(s.voicePack) { ok -> if (!ok) voice.useNeural = false }
+    }
+
+    /** Contacts, apps and remembered people feed the speech corrector. */
+    suspend fun refreshVocabulary() {
+        val contacts = runCatching { systemActions.allContactNames() }.getOrDefault(emptyList())
+        nexus.refreshVocabulary(contacts + nexus.apps.allLabels())
+    }
+
+    /** JSON from the configured LLM (Claude), or null when the provider is local/off. */
+    suspend fun llmJson(prompt: String): org.json.JSONObject? {
+        val b = nexus.brain as? ClaudeBrain ?: return null
+        if (memory.settings.llmProvider != "claude") return null
+        val out = runCatching { b.complete("Return only valid JSON.", prompt, 800) }.getOrNull() ?: return null
+        return runCatching { org.json.JSONObject(out.substring(out.indexOf('{'), out.lastIndexOf('}') + 1)) }.getOrNull()
+    }
+
+    suspend fun llmText(prompt: String): String? {
+        val b = nexus.brain as? ClaudeBrain ?: return null
+        if (memory.settings.llmProvider != "claude") return null
+        return runCatching { b.complete("You are NEXUS, a concise writing assistant.", prompt, 1200) }.getOrNull()
+    }
+
+    /** Crashes are written to the diagnostics log, so they can be reviewed in the app. */
+    private fun installCrashLog() {
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching { File(filesDir, "crash.txt").appendText("${java.util.Date()} [${t.name}] ${e.stackTraceToString().take(4000)}\n\n") }
+            prev?.uncaughtException(t, e)
+        }
+    }
+
     fun ask(text: String) {
+        val n = ai.nexus.core.nlu.Fuzzy.normalize(text)
+        if (n in setOf("that s all", "thats all", "that is all", "bas", "bas itna hi", "thank you that s all", "ok that s all", "goodbye", "bye")) {
+            voice.endConversation(); add(ChatLine(true, text)); speakProactive("Anytime, ${memory.settings.addressAs}."); return
+        }
+        pendingPrefix?.let { p -> pendingPrefix = null; if (!text.startsWith(p, true)) { ask(p + text); return } }
         if (!text.equals("watch me", true)) scope.launch {
             runCatching { device.snapshot() }.getOrNull()?.takeIf { it.packageName != packageName }?.let { lastAppScreen = it.toPromptText(150) }
         }
@@ -149,7 +233,7 @@ class NexusApp : Application() {
         get() = secrets.getString("model", ClaudeBrain.DEFAULT_MODEL) ?: ClaudeBrain.DEFAULT_MODEL
         set(v) { secrets.edit().putString("model", v.trim()).apply(); nexus.brain = buildBrain() }
 
-    private fun buildBrain() = apiKey?.let { runCatching { ClaudeBrain(it, model) }.getOrNull() }
+    private fun buildBrain() = apiKey?.takeIf { memory.settings.llmProvider == "claude" }?.let { runCatching { ClaudeBrain(it, model) }.getOrNull() }
 
     fun applySettings() {
         val s = memory.settings
@@ -159,6 +243,10 @@ class NexusApp : Application() {
         voice.language = s.language
         voice.speechRate = s.speechRate
         voice.accurate = s.accurateListening
+        voice.followUpMs = s.followUpSeconds * 1000L
+        voice.pitch = s.voicePitch
+        voice.effects = s.voiceEffects
+        voice.muted = s.voiceMuted
     }
 
     fun onAccessibilityConnected() { scope.launch { nexus.apps.refresh() } }

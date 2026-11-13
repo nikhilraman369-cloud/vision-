@@ -11,8 +11,8 @@ android {
         applicationId = "ai.nexus.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 7
+        versionName = "2.0.0"
         // The on-device brain ships native code; arm64 covers every modern phone and keeps the APK small.
         ndk { abiFilters += setOf("arm64-v8a") }
     }
@@ -30,6 +30,7 @@ android {
     }
 
     packaging {
+        jniLibs { pickFirsts += setOf("**/libc++_shared.so", "**/libonnxruntime.so") }
         resources {
             excludes += setOf(
                 "META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/*.kotlin_module",
@@ -57,4 +58,6 @@ dependencies {
     // Free, fully offline speech recognition with streaming partial results (always-on "Hey Nexus").
     implementation("com.alphacephei:vosk-android:0.3.47")
     implementation("net.java.dev.jna:jna:5.13.0@aar")
+    // Unpacks offline voice packs (.tar.bz2). The neural voice runtime (sherpa-onnx) is fetched by CI.
+    implementation("org.apache.commons:commons-compress:1.27.1")
 }

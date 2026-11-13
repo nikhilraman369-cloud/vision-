@@ -110,6 +110,20 @@ class ClaudeBrain(
         return reply.ifBlank { "Sorry, that took too long. Try asking again." }
     }
 
+    /** Plain completion (no tools) for planners/extractors that want strict JSON or a short text. */
+    suspend fun complete(system: String, user: String, maxTokens: Long = 2000): String? {
+        val resp = send {
+            MessageCreateParams.builder()
+                .model(model)
+                .maxTokens(maxTokens)
+                .systemOfTextBlockParams(cachedSystem(system))
+                .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
+                .addUserMessage(user)
+        }
+        if (resp.isRefusal()) return null
+        return resp.text().ifBlank { null }
+    }
+
     // ================================================================ screen Q&A
 
     override suspend fun describeScreen(question: String, screen: ScreenSnapshot, screenshot: ByteArray?, context: String): String {

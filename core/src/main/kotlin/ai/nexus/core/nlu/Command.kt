@@ -92,6 +92,27 @@ sealed interface Command {
     /** "Send this to Arjun": share what's on screen to a contact. */
     data class ShareTo(val contact: String, val app: String? = null) : Command
     data object OpenLatestNotification : Command
+    // ---- life / productivity
+    data class StartMode(val name: String, val subject: String? = null) : Command
+    data class StopMode(val name: String? = null) : Command
+    data class Capture(val text: String) : Command
+    data class AddExpense(val text: String) : Command
+    data class AddTask(val title: String, val dueText: String? = null) : Command
+    data object ListTasks : Command
+    data class CompleteTask(val title: String?) : Command
+    data object WhatNow : Command
+    /** "morning" | "evening" | "weekly" | "digest" */
+    data class Brief(val kind: String) : Command
+    data class QuizMe(val subject: String? = null) : Command
+    data class AddFlashcard(val subject: String?, val question: String, val answer: String) : Command
+    data class AllowApp(val app: String, val minutes: Int) : Command
+    data class WhatDoYouKnow(val topic: String) : Command
+    /** "No, I meant Rahul Sharma" */
+    data class MeantInstead(val text: String) : Command
+    /** "Always use WhatsApp for him" */
+    data class PreferApp(val contact: String, val app: String) : Command
+    /** "pause notification watching", "mute voice", "not now" */
+    data class Toggle(val what: String, val on: Boolean) : Command
     /** A question or conversation – answered, not executed. */
     data class Chat(val text: String) : Command
     /** A phone task the rule-based parser could not break down – handed to the LLM agent. */

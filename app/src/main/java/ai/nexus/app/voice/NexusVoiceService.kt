@@ -53,6 +53,7 @@ class NexusVoiceService : Service(), HandsFreeStateMachine.Listener {
     private lateinit var app: NexusApp
     private lateinit var haptics: HapticEngine
     private lateinit var machine: HandsFreeStateMachine
+    private lateinit var engine: PhoneticWakeWordEngine
     @Volatile private var loop: Thread? = null
     @Volatile private var running = false
     @Volatile private var screenOn = true
@@ -66,8 +67,8 @@ class NexusVoiceService : Service(), HandsFreeStateMachine.Listener {
         app = NexusApp.get(this)
         haptics = HapticEngine(this)
         if (!startForegroundCompat()) { stopSelf(); return }
-        val engine = PhoneticWakeWordEngine(app.memory.settings.wakeWord)
-        machine = HandsFreeStateMachine(engine, listener = this)
+        engine = PhoneticWakeWordEngine(app.memory.settings.wakeWord)
+        machine = HandsFreeStateMachine(engine, windowMs = app.memory.settings.followUpSeconds * 1000L, listener = this)
         instance = this
         screenOn = getSystemService(PowerManager::class.java)?.isInteractive ?: true
         registerReceiver(screenReceiver, IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON) })
@@ -143,7 +144,16 @@ class NexusVoiceService : Service(), HandsFreeStateMachine.Listener {
                     if (!screenOn && !app.memory.settings.listenScreenOff) { Thread.sleep(300); continue }
                     val n = audio.read(buf, 0, buf.size)
                     if (n <= 0) continue
-                    if (machine.state == HandsFreeState.PAUSED) { machine.tick(); continue }
+                    if (machine.state == HandsFreeState.PAUSED) {
+                        // Barge-in: while NEXUS talks, "stop" or its name cuts it off and listens.
+                        val fin = rec.acceptWaveForm(buf, n)
+                        val heard = if (fin) JSONObject(rec.result).optString("text") else JSONObject(rec.partialResult).optString("partial")
+                        if (heard.isNotBlank() && (Regex("\\b(stop|wait|ruko|nexus|naxus|nexis)\\b").containsMatchIn(heard.lowercase()) || engine.match(heard) != null)) {
+                            rec.reset()
+                            main.post { app.voice.shutUp(); machine.resume(); machine.activate() }
+                        }
+                        continue
+                    }
                     if (rec.acceptWaveForm(buf, n)) {
                         val text = JSONObject(rec.result).optString("text").trim()
                         lastPartial = ""
@@ -165,7 +175,7 @@ class NexusVoiceService : Service(), HandsFreeStateMachine.Listener {
 
     // ------------------------------------------------------------ state machine callbacks
 
-    override fun onWake() { haptics.tick(); _state.value = HandsFreeState.ACTIVE_COMMAND_WINDOW }
+    override fun onWake() { haptics.tick(); if (app.memory.settings.earcons) app.sounds.activate(); _state.value = HandsFreeState.ACTIVE_COMMAND_WINDOW }
 
     override fun onSleep() { haptics.tick(); _state.value = HandsFreeState.SLEEP_WAKEWORD }
 
