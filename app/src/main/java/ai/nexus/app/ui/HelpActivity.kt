@@ -26,7 +26,8 @@ class HelpActivity : AppCompatActivity() {
 
     companion object {
         val SECTIONS = listOf(
-            "ON ANY SCREEN" to listOf("What's on my screen?", "Read this page", "Tap Settings", "Open the second result", "Scroll down", "Go back", "Find the search button"),
+            "HANDS-FREE (turn on \"Hey Nexus\" first)" to listOf("Hey Nexus, open Instagram", "Hey Nexus, play Skyfall on Spotify", "Hey Nexus, reply to Rahul saying on my way"),
+            "ON ANY SCREEN" to listOf("Tap top right", "Double tap center", "Send this to Arjun", "What's on my screen?", "Read this page", "Tap Settings", "Open the second result", "Scroll down", "Go back", "Find the search button"),
             "TYPING IN ANY APP" to listOf("Type do it later", "Send see you tomorrow", "Copy this", "Paste"),
             "YOUTUBE" to listOf("YouTube pe filmmaking search karo", "Open the first video", "Open the first short", "Go to Shorts", "Next short", "Like it", "Comment amazing video", "Pause the video"),
             "INSTAGRAM" to listOf("Open Instagram and go to Reels", "Next reel", "Like it and save it", "Comment nice video", "Follow this account", "Open my messages"),

@@ -19,6 +19,8 @@ dependencies {
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     // Official Anthropic SDK (Java SDK, used from Kotlin).
     api("com.anthropic:anthropic-java:3.3.0")
+    // Double Metaphone phonetic encoder for the fuzzy "Hey Nexus" matcher (free, offline).
+    api("commons-codec:commons-codec:1.17.0")
 
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

@@ -40,6 +40,27 @@ class NexusAccessibilityService : AccessibilityService() {
     /** Live platform nodes of the latest snapshot, by UiNode id. */
     @Volatile private var liveNodes: Map<Int, AccessibilityNodeInfo> = emptyMap()
 
+    // ---------------- Predictive UI cache ----------------
+    // Ids are unique across snapshots, and the last few snapshots' nodes stay
+    // reachable, so a node from any recent snapshot always maps to its own view.
+    private val idCounter = java.util.concurrent.atomic.AtomicInteger(1)
+    private val nodeMaps = java.util.concurrent.ConcurrentHashMap<Int, AccessibilityNodeInfo>()
+    private val snapshotRanges = java.util.ArrayDeque<IntRange>()
+    @Volatile private var cached: Pair<ScreenSnapshot, Long>? = null
+    private val cacheThread = android.os.HandlerThread("nexus-ui-cache").apply { start() }
+    private val cacheHandler = android.os.Handler(cacheThread.looper)
+    private val refreshCache = Runnable {
+        val v = changes.value
+        runCatching { takeSnapshot() }.getOrNull()?.let { cached = it to v }
+    }
+
+    /** The current screen: instant from the pre-built cache if nothing changed since, else read now. */
+    fun currentSnapshot(): ScreenSnapshot? {
+        cached?.let { (snap, v) -> if (v == changes.value) return snap }
+        val v = changes.value
+        return takeSnapshot()?.also { cached = it to v }
+    }
+
     override fun onServiceConnected() {
         instance = this
         NexusApp.get(this).onAccessibilityConnected()
@@ -51,6 +72,9 @@ class NexusAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) event.packageName?.toString()
             ?.takeIf { it != "com.vivo.card" && it != "com.android.systemui" }?.let { foregroundPackage = it }
         recordForTeaching(event)
+        // Re-index the screen 100 ms after it stops changing, so commands find nodes instantly.
+        cacheHandler.removeCallbacks(refreshCache)
+        cacheHandler.postDelayed(refreshCache, 100)
         lastEventAt = System.currentTimeMillis()
         changes.value = changes.value + 1
     }
@@ -92,6 +116,7 @@ class NexusAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        cacheThread.quitSafely()
         if (instance === this) instance = null
         super.onDestroy()
     }
@@ -118,10 +143,11 @@ class NexusAccessibilityService : AccessibilityService() {
         return roots.firstOrNull { it.packageName?.toString() == foregroundPackage } ?: roots.maxByOrNull { val r = Rect(); it.getBoundsInScreen(r); r.width().toLong() * r.height() }
     }
 
-    fun takeSnapshot(): ScreenSnapshot? {
+    @Synchronized fun takeSnapshot(): ScreenSnapshot? {
         val root = appRoot() ?: return null
         val map = HashMap<Int, AccessibilityNodeInfo>()
-        var next = 1
+        val first = idCounter.get()
+        var next = first
         val rect = Rect()
         fun convert(n: AccessibilityNodeInfo, depth: Int): UiNode {
             val id = next++
@@ -157,7 +183,11 @@ class NexusAccessibilityService : AccessibilityService() {
             )
         }
         val tree = convert(root, 0)
-        liveNodes = map
+        idCounter.set(next)
+        nodeMaps.putAll(map)
+        snapshotRanges.addLast(first until next)
+        while (snapshotRanges.size > 6) snapshotRanges.pollFirst()?.forEach { nodeMaps.remove(it) }
+        liveNodes = nodeMaps
         val dm = resources.displayMetrics
         val keyboard = runCatching { windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }.getOrDefault(false)
         val pkg = root.packageName?.toString() ?: foregroundPackage ?: "unknown"
@@ -175,7 +205,7 @@ class NexusAccessibilityService : AccessibilityService() {
             while (System.currentTimeMillis() < settleUntil && System.currentTimeMillis() - lastEventAt < QUIET_MS) {
                 kotlinx.coroutines.delay(30)
             }
-            val s = takeSnapshot() ?: continue
+            val s = currentSnapshot() ?: continue
             if (previousFingerprint == null || s.fingerprint != previousFingerprint) return s
         }
         return null
@@ -205,7 +235,8 @@ class NexusAccessibilityService : AccessibilityService() {
     }
 
     fun scrollNode(node: UiNode?, direction: Direction): Boolean {
-        val target = node?.let { live(it) } ?: liveNodes.values.filter { it.isScrollable }.maxByOrNull { n ->
+        val latest = snapshotRanges.peekLast()
+        val target = node?.let { live(it) } ?: liveNodes.entries.filter { (k, v) -> latest != null && k in latest && v.isScrollable }.map { it.value }.maxByOrNull { n ->
             val r = Rect(); n.getBoundsInScreen(r); r.width().toLong() * r.height()
         } ?: return false
         val specific = when (direction) {

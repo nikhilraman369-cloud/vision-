@@ -7,6 +7,8 @@ import ai.nexus.core.nlu.Command
 import ai.nexus.core.nlu.Reaction
 import ai.nexus.core.nlu.Section
 import ai.nexus.core.screen.ElementFinder
+import ai.nexus.core.screen.InputPurpose
+import ai.nexus.core.screen.SemanticUiDisambiguator
 import ai.nexus.core.screen.ScreenKind
 import ai.nexus.core.screen.ScreenSnapshot
 import ai.nexus.core.screen.UiNode
@@ -116,21 +118,24 @@ class GenericSkill : AppSkill {
 
     private suspend fun write(cmd: Command.Write, s: ScreenSnapshot, env: SkillEnv): Outcome {
         val ops = env.ops
-        val f = ElementFinder(s)
-        // Prefer a comment/message composer, else focused field, else the lowest field.
-        var field = s.editableFields().firstOrNull { (it.hintText ?: it.text ?: "").contains("comment", true) || (it.hintText ?: "").contains("message", true) }
-            ?: f.firstEditable()
-        if (field == null) {
-            // Many apps show a fake "Add a comment…" text that turns into a field when tapped.
-            val opener = f.byLabel("Add a comment", "Add a comment…", "Write a comment", "Message", "Reply", "Type a message", minScore = 0.75)
-                ?: return Outcome.NeedsAgent("There's no text box to type in.")
-            val after = ops.tap(opener, s) ?: return Outcome.Failed("The text box didn't open.")
-            field = ElementFinder(after).firstEditable() ?: return Outcome.NeedsAgent("There's no text box to type in.")
-        }
-        val typed = ops.typeText(cmd.text, field)
-        if (typed is Outcome.Failed) return typed
         val kind = env.ctx.currentScreen
-        val isComment = (field.hintText ?: "").contains("comment", true) || kind == ScreenKind.IG_COMMENTS || kind == ScreenKind.YT_COMMENTS
+        val purpose = when (kind) {
+            ScreenKind.IG_COMMENTS, ScreenKind.YT_COMMENTS, ScreenKind.YT_WATCH, ScreenKind.YT_SHORTS, ScreenKind.IG_REELS, ScreenKind.IG_FEED -> InputPurpose.COMMENT
+            ScreenKind.WA_CHAT, ScreenKind.IG_DM_THREAD, ScreenKind.MESSAGES_THREAD -> InputPurpose.MESSAGE
+            else -> InputPurpose.ANY
+        }
+        val pkg = s.packageName
+        // Score every text box / "Add a comment…" opener and pick the one the user means
+        // (the main comment box, never someone's Reply box).
+        val dis = SemanticUiDisambiguator(s)
+        val best = dis.bestInput(purpose, userSaidReply = false, learnedViewId = env.memory.selector(pkg, "input:$purpose"))
+            ?: dis.bestInput(InputPurpose.ANY)
+            ?: return Outcome.NeedsAgent("There's no text box to type in.")
+        val typed = ops.typeText(cmd.text, best.node)
+        if (typed is Outcome.Failed) return typed
+        val field = ops.current()?.let { snap -> snap.focusedField() ?: snap.nodes.firstOrNull { it.editable && it.text?.contains(cmd.text.take(15)) == true } } ?: best.node
+        env.memory.rememberSelector(pkg, "input:$purpose", field.viewId)
+        val isComment = purpose == InputPurpose.COMMENT || (field.hintText ?: "").contains("comment", true)
         val submit = cmd.submit ?: isComment
         if (!submit) return if (typed is Outcome.Success) Outcome.Success("Typed it. Say \"send\" when you want it sent.") else typed
         return ops.submit(cmd.text, listOf("Post", "Send", "Reply", "Comment", "Send comment", "Post comment"), listOf("layout_comment_thread_post_button", "layout_comment_thread_post_button_click_area"))
@@ -138,20 +143,24 @@ class GenericSkill : AppSkill {
 
     private suspend fun search(query: String, s: ScreenSnapshot, env: SkillEnv): Outcome {
         val ops = env.ops
-        var f = ElementFinder(s)
-        var field = s.editableFields().firstOrNull { (it.hintText ?: it.text ?: it.contentDescription ?: "").contains("search", true) }
-        if (field == null) {
-            val btn = f.byLabel("Search", "Search or type URL", "Search or type web address", requireClickable = true, minScore = 0.75)
+        val dis = SemanticUiDisambiguator(s)
+        var field: UiNode? = dis.bestInput(InputPurpose.SEARCH, learnedViewId = env.memory.selector(s.packageName, "input:SEARCH"))?.node
+        if (field == null || (!field.editable && !(field.label.contains("search", true)))) {
+            val btn = dis.bestNavigation(listOf("Search", "Search or type URL", "Search or type web address"))
                 ?: return Outcome.NeedsAgent("I couldn't find a search option here.")
-            val after = ops.tap(btn, s) ?: return Outcome.Failed("Search didn't open.")
-            f = ElementFinder(after)
-            field = f.firstEditable() ?: return Outcome.NeedsAgent("Search opened but I can't find the box.")
+            val after = ops.tapReliably(btn, s) ?: return Outcome.Failed("Search didn't open.")
+            field = ops.waitFor(2000) { it.editableFields().isNotEmpty() }?.let { snap -> snap.focusedField() ?: ElementFinder(snap).firstEditable() }
+                ?: ElementFinder(after).firstEditable() ?: return Outcome.NeedsAgent("Search opened but I can't find the box.")
         }
         val typed = ops.typeText(query, field)
         if (typed is Outcome.Failed) return typed
         val before = ops.current()
-        env.device.pressImeAction(field)
-        ops.awaitChange(before, 4000)
+        env.memory.rememberSelector(s.packageName, "input:SEARCH", before?.focusedField()?.viewId ?: field.viewId)
+        if (!env.device.pressImeAction(null)) {
+            before?.let { snap -> SemanticUiDisambiguator(snap).submitFor(snap.focusedField())?.let { b -> ops.tap(b, snap) } }
+        }
+        // Results come over the network: wait until the list has actually loaded.
+        ops.waitForReady(env.memory.patience(s.packageName, 8000)) { it.fingerprint != before?.fingerprint }
         env.ctx.lastSearchQuery = query; env.ctx.lastSearchApp = env.ctx.currentPackage
         return Outcome.Success()
     }
@@ -162,7 +171,7 @@ class GenericSkill : AppSkill {
         val target = (if (cmd.ordinal < 0) items.lastOrNull() else items.getOrNull(cmd.ordinal - 1))
             ?: return Outcome.NeedsAgent("I couldn't find item ${cmd.ordinal} in a list here.")
         env.ctx.currentItem = target.allText().take(100)
-        env.ops.tap(target, s) ?: return Outcome.Failed("It didn't open.")
+        env.ops.tapReliably(target, s) ?: return Outcome.Failed("It didn't open.")
         return Outcome.Success()
     }
 
@@ -175,9 +184,9 @@ class GenericSkill : AppSkill {
             Section.LIBRARY -> listOf("Library", "You", "Saved")
             else -> listOf(label)
         }
-        val n = ElementFinder(s).byLabel(*alts.toTypedArray(), requireClickable = true, minScore = 0.85)
+        val n = SemanticUiDisambiguator(s).bestNavigation(alts)
             ?: return Outcome.NeedsAgent("I couldn't find $label here.")
-        env.ops.tap(n, s) ?: return Outcome.Failed("$label didn't open.")
+        env.ops.tapReliably(n, s) ?: return Outcome.Failed("$label didn't open.")
         return Outcome.Success()
     }
 
@@ -193,10 +202,13 @@ class GenericSkill : AppSkill {
             ranked = ElementFinder(s).rankByLabel(listOf(cmd.label)).filter { it.score >= 0.6 }
             tries++
         }
-        val match = (cmd.ordinal?.let { ranked.getOrNull(it - 1) } ?: ranked.firstOrNull())
+        // Learned last time: the exact element that worked for this label in this app.
+        val learned = env.memory.selector(s.packageName, "tap:${cmd.label}")?.let { vid -> s.nodes.firstOrNull { it.viewId == vid && it.bounds.area > 0 } }
+        val node = (cmd.ordinal?.let { ranked.getOrNull(it - 1) } ?: ranked.firstOrNull())?.node ?: learned
             ?: return Outcome.NeedsAgent("I don't see \"${cmd.label}\" on the screen.")
-        val ok = if (cmd.long) env.device.longClick(match.node) || env.device.longPressAt(match.node.bounds.centerX, match.node.bounds.centerY)
-        else env.ops.tap(match.node, s) != null
+        val ok = if (cmd.long) env.device.longClick(node) || env.device.longPressAt(node.bounds.centerX, node.bounds.centerY)
+        else env.ops.tapReliably(node, s) != null
+        if (ok) env.memory.rememberSelector(s.packageName, "tap:${cmd.label}", node.viewId)
         if (cmd.long) env.ops.awaitChange(s, 1500)
         return if (ok) Outcome.Success() else Outcome.Failed("That didn't respond to a tap.")
     }

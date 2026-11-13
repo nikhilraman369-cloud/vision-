@@ -377,5 +377,15 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
         return if (start(i)) SysResult.Done(if (front) "Front camera is open — say \"tap shutter\" or press the button." else "") else SysResult.Failed("No camera app found.")
     }
 
+    override suspend fun isMusicActive(): Boolean? {
+        val am = context.getSystemService(AudioManager::class.java) ?: return null
+        if (am.isMusicActive) return true
+        val playing = runCatching { activeController()?.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING }.getOrNull()
+        return playing ?: false
+    }
+
+    private val hapticEngine by lazy { ai.nexus.app.voice.HapticEngine(context) }
+    override fun haptic(kind: String) { hapticEngine.play(kind) }
+
     override suspend fun batteryPercent(): Int? = context.getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
 }

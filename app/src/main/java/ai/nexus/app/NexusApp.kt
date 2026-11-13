@@ -32,6 +32,11 @@ class NexusApp : Application() {
     lateinit var voice: VoiceEngine
     lateinit var device: AndroidDevice
     lateinit var brainManager: PhoneBrainManager
+    lateinit var voskModels: ai.nexus.app.voice.VoskModelManager
+    lateinit var haptics: ai.nexus.app.voice.HapticEngine
+
+    /** Set while hands-free ("Hey Nexus") is running: opens its command window. */
+    @Volatile var handsFreeActivate: (() -> Unit)? = null
 
     private val _teaching = MutableStateFlow(false)
     val teaching: StateFlow<Boolean> = _teaching
@@ -58,6 +63,10 @@ class NexusApp : Application() {
             }
         }
         brainManager.warmUp()
+        haptics = ai.nexus.app.voice.HapticEngine(this)
+        voskModels = ai.nexus.app.voice.VoskModelManager(this, scope)
+        voskModels.refresh(memory.settings.speechModel)
+        nexus.selfPackage = packageName
 
         scope.launch {
             nexus.events.collect { e ->
@@ -70,6 +79,7 @@ class NexusApp : Application() {
                     is NexusEvent.StepStarted -> _status.value = if (e.total > 1) "Step ${e.index}/${e.total}: ${e.description}" else e.description
                     is NexusEvent.StepFinished -> if (e.outcome !is Outcome.Success) {
                         add(ChatLine(false, "• ${e.description}: ${e.outcome.message}", detail = true))
+                        if (e.outcome is Outcome.Failed) haptics.error()
                         // Keep what the screen looked like when something went wrong, for "Copy screen info".
                         runCatching { device.snapshot() }.getOrNull()?.takeIf { it.packageName != packageName }?.let { lastAppScreen = it.toPromptText(150) }
                     }
@@ -81,7 +91,7 @@ class NexusApp : Application() {
                         AgentState.WAITING_FOR_USER -> "Waiting for you"
                     }
                     is NexusEvent.Error -> add(ChatLine(false, "⚠ ${e.message}", detail = true))
-                    is NexusEvent.Ack -> { add(ChatLine(false, e.text.ifBlank { "✓ Done" })); voice.tick() }
+                    is NexusEvent.Ack -> { add(ChatLine(false, e.text.ifBlank { "✓ Done" })); haptics.success(); voice.tick() }
                     NexusEvent.HideBubble -> OverlayService.stop(this@NexusApp)
                     is NexusEvent.TeachingChanged -> _teaching.value = e.active
                 }
@@ -101,6 +111,18 @@ class NexusApp : Application() {
             st.isNotEmpty() && st.none { it.command is ai.nexus.core.nlu.Command.Agentic || it.command is ai.nexus.core.nlu.Command.Chat }
         }
         return options.firstOrNull(::understood) ?: options.first()
+    }
+
+    /** Bubble tap / mic button: open hands-free's command window if it's on, else tap-to-talk. */
+    fun talk() { handsFreeActivate?.invoke() ?: voice.toggle() }
+
+    fun notifyHandsFreeError(message: String) { add(ChatLine(false, "⚠ $message", detail = true)); haptics.error() }
+
+    /** Start "Hey Nexus" if the user turned it on (must be called while the app is in front). */
+    fun ensureHandsFree(context: android.content.Context) {
+        val want = memory.settings.handsFree && voskModels.modelPath(memory.settings.speechModel) != null
+        if (want && ai.nexus.app.voice.NexusVoiceService.instance == null) ai.nexus.app.voice.NexusVoiceService.start(context)
+        if (!want && ai.nexus.app.voice.NexusVoiceService.instance != null) ai.nexus.app.voice.NexusVoiceService.stop(context)
     }
 
     fun ask(text: String) {

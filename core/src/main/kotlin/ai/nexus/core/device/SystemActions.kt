@@ -72,6 +72,10 @@ interface SystemActions {
     suspend fun directions(place: String, mode: String?): SysResult = SysResult.Failed("No maps app.")
     suspend fun addCalendarEvent(title: String, startMs: Long?, durationMin: Int = 60): SysResult = SysResult.Failed("No calendar app.")
     suspend fun openCamera(front: Boolean, video: Boolean): SysResult = SysResult.Failed("No camera app.")
+    /** Whether audio is actually playing right now; null if unknown. Used to verify "play X" really started. */
+    suspend fun isMusicActive(): Boolean? = null
+    /** Short haptic patterns for silent feedback. */
+    fun haptic(kind: String) {}
     suspend fun batteryPercent(): Int?
     fun nowMs(): Long = System.currentTimeMillis()
 }

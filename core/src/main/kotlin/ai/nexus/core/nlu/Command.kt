@@ -87,6 +87,10 @@ sealed interface Command {
     data class CalendarEvent(val title: String, val dayText: String?, val hour: Int?, val minute: Int?) : Command
     data class TakePhoto(val front: Boolean = false, val video: Boolean = false) : Command
     data object ClearNotifications : Command
+    /** Tap a screen area when buttons have no labels: row 0..2 (top/middle/bottom), col 0..2 (left/center/right). */
+    data class TapRegion(val row: Int, val col: Int, val double: Boolean = false, val long: Boolean = false) : Command
+    /** "Send this to Arjun": share what's on screen to a contact. */
+    data class ShareTo(val contact: String, val app: String? = null) : Command
     data object OpenLatestNotification : Command
     /** A question or conversation – answered, not executed. */
     data class Chat(val text: String) : Command

@@ -59,7 +59,9 @@ class OverlayService : Service() {
         if (Settings.canDrawOverlays(this)) addBubble()
         val app = NexusApp.get(this)
         scope.launch {
-            combine(app.voice.state, app.nexus.state) { v, a -> v to a }.collect { (v, a) -> render(v, a) }
+            combine(app.voice.state, app.nexus.state, ai.nexus.app.voice.NexusVoiceService.state) { v, a, h ->
+                Triple(v, a, h)
+            }.collect { (v, a, h) -> handsFreeActive = h == ai.nexus.core.voice.HandsFreeState.ACTIVE_COMMAND_WINDOW; render(v, a) }
         }
         scope.launch {
             app.chat.collect { lines ->
@@ -105,6 +107,7 @@ class OverlayService : Service() {
 
     private var closeTarget: View? = null
     private var quickPanel: View? = null
+    @Volatile private var handsFreeActive = false
     private var teachingNow = false
 
     @SuppressLint("ClickableViewAccessibility")
@@ -189,7 +192,7 @@ class OverlayService : Service() {
 
         val app = NexusApp.get(this)
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { app.voice.toggle(); return true }
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { app.talk(); return true }
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 quickPanel?.let { it.visibility = if (it.visibility == View.VISIBLE) View.GONE else View.VISIBLE }; return true
             }
@@ -225,7 +228,7 @@ class OverlayService : Service() {
 
     private fun render(v: VoiceState, a: AgentState) {
         val color = when {
-            v == VoiceState.LISTENING || v == VoiceState.HEARING -> LISTEN_COLOR
+            v == VoiceState.LISTENING || v == VoiceState.HEARING || (handsFreeActive && a == AgentState.IDLE) -> LISTEN_COLOR
             v == VoiceState.SPEAKING -> SPEAK_COLOR
             a == AgentState.THINKING -> THINK_COLOR
             a == AgentState.EXECUTING -> WORK_COLOR

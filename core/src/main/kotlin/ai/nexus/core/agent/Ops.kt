@@ -61,6 +61,54 @@ class Ops(val device: DeviceController, val ctx: WorkingContext) {
         }
     }
 
+    /** Is the app still loading? (spinners, shimmer placeholders, "Loading…", empty results) */
+    fun isLoading(s: ScreenSnapshot): Boolean = s.nodes.any { n ->
+        n.bounds.area > 0 && (
+            n.simpleClass.contains("ProgressBar") ||
+                (n.shortViewId ?: "").let { id -> id.contains("shimmer") || id.contains("skeleton") || id.contains("placeholder") || id.contains("loading") || id.contains("progress") } ||
+                (n.text ?: n.contentDescription ?: "").let { t -> t.equals("Loading", true) || t.startsWith("Loading…") || t.startsWith("Loading...") }
+            )
+    }
+
+    /**
+     * Wait for [predicate] on a screen that has finished loading. Event-driven
+     * (re-checks on every screen change, at least every 50–400 ms with
+     * backoff), up to a network grace window – never a blind sleep.
+     */
+    suspend fun waitForReady(timeoutMs: Long = 8000, predicate: (ScreenSnapshot) -> Boolean): ScreenSnapshot? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var poll = 50L
+        var s = screen()
+        while (true) {
+            if (s != null && predicate(s) && !isLoading(s)) return s
+            val left = deadline - System.currentTimeMillis()
+            if (left <= 0) return s?.takeIf(predicate)
+            s = device.awaitChange(s?.fingerprint, minOf(left, poll)) ?: device.snapshot()
+            s?.let { observe(it) }
+            poll = minOf(poll * 2, 400)
+        }
+    }
+
+    /**
+     * Tap and confirm something happened. If the tap was swallowed (layout
+     * shift, slow network), re-locate the same element on the fresh screen and
+     * try again – up to 3 attempts. Not for toggles like Like/Save.
+     */
+    suspend fun tapReliably(node: UiNode, before: ScreenSnapshot? = cached, attempts: Int = 3): ScreenSnapshot? {
+        var target = node; var s0 = before ?: screen()
+        repeat(attempts) { i ->
+            val after = tap(target, s0)
+            if (after != null && after.fingerprint != s0?.fingerprint) return after
+            if (i == attempts - 1) return after
+            val fresh = screen() ?: return after
+            target = fresh.nodes.firstOrNull { n ->
+                (node.viewId != null && n.viewId == node.viewId && n.label == node.label) || (n.label.isNotBlank() && n.label == node.label && n.className == node.className)
+            } ?: return after
+            s0 = fresh
+        }
+        return s0
+    }
+
     suspend fun tap(node: UiNode, before: ScreenSnapshot? = cached): ScreenSnapshot? {
         val target = before?.clickableTarget(node) ?: node
         val ok = device.click(target) || device.tapAt(target.bounds.centerX, target.bounds.centerY)
@@ -98,8 +146,15 @@ class Ops(val device: DeviceController, val ctx: WorkingContext) {
      */
     suspend fun typeText(text: String, field: UiNode? = null): Outcome {
         val s = current() ?: return Outcome.Failed("I can't see the screen.")
-        val target = field ?: ElementFinder(s).firstEditable()
+        var target = field ?: ElementFinder(s).firstEditable()
             ?: return Outcome.Failed("There's no text box on this screen.")
+        if (!target.editable) {
+            // Two-step input: tap the "Add a comment…" opener, wait for the real box to get focus.
+            val opened = tap(target, s)
+            val ready = waitFor(1500) { snap -> snap.editableFields().isNotEmpty() } ?: opened
+            target = ready?.let { snap -> snap.focusedField() ?: ai.nexus.core.screen.SemanticUiDisambiguator(snap).bestInput(ai.nexus.core.screen.InputPurpose.ANY)?.node?.takeIf { it.editable } ?: ElementFinder(snap).firstEditable() }
+                ?: return Outcome.Failed("The text box didn't open.")
+        }
         if (!target.focused) device.click(target)
         if (!device.setText(target, text)) return Outcome.Failed("The text box didn't accept the text.")
         val after = waitFor(1500) { snap -> snap.editableFields().any { f -> f.text?.contains(text.take(20)) == true } }
@@ -112,8 +167,10 @@ class Ops(val device: DeviceController, val ctx: WorkingContext) {
     suspend fun submit(text: String?, labels: List<String> = SEND_LABELS, viewIds: List<String> = emptyList()): Outcome {
         val s = current() ?: return Outcome.Failed("I can't see the screen.")
         val f = ElementFinder(s)
-        val btn = viewIds.firstNotNullOfOrNull { f.byViewId(it) } ?: f.byLabel(*labels.toTypedArray(), requireClickable = true, minScore = 0.85)
-        val field = f.firstEditable()
+        val field = s.focusedField() ?: f.firstEditable()
+        val btn = viewIds.firstNotNullOfOrNull { f.byViewId(it) }
+            ?: ai.nexus.core.screen.SemanticUiDisambiguator(s).submitFor(field)
+            ?: f.byLabel(*labels.toTypedArray(), requireClickable = true, minScore = 0.85)
         if (btn == null) {
             if (!device.pressImeAction(field)) return Outcome.Failed("I couldn't find a send button.")
         } else {

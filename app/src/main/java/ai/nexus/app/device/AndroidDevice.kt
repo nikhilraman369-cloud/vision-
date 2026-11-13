@@ -19,7 +19,8 @@ import kotlinx.coroutines.withContext
 class AndroidDevice(private val context: Context) : DeviceController {
     private val svc get() = NexusAccessibilityService.instance
 
-    override suspend fun snapshot(): ScreenSnapshot? = withContext(Dispatchers.Main) { svc?.takeSnapshot() }
+    /** Served from the accessibility service's predictive cache when the screen hasn't changed. */
+    override suspend fun snapshot(): ScreenSnapshot? = withContext(Dispatchers.Default) { svc?.currentSnapshot() }
 
     override suspend fun awaitChange(previousFingerprint: Int?, timeoutMs: Long): ScreenSnapshot? =
         withContext(Dispatchers.Main) { svc?.awaitChange(previousFingerprint, timeoutMs) }

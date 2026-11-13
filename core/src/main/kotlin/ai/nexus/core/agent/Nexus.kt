@@ -176,6 +176,7 @@ class Nexus(
                     newSteps += st
                 }
                 setState(AgentState.IDLE)
+                if (newSteps.all { it.command is Command.Agentic || it.command is Command.Chat }) lastMiss = key to System.currentTimeMillis()
                 request = ai.nexus.core.nlu.ParsedRequest(text, norm, newSteps)
                 if (request.isChat) { runJob { chat(text) }; return@withLock }
             }
@@ -192,8 +193,17 @@ class Nexus(
             }
             ctx.lastUtterance = text
             val finalSteps = request.steps
+            val missed = lastMiss?.takeIf { (_, at) -> System.currentTimeMillis() - at < 15_000 }?.first
             runJob {
                 val ok = runSteps(finalSteps)
+                if (!ok && finalSteps.size == 1) lastMiss = key to System.currentTimeMillis()
+                if (ok) {
+                    lastMiss = null
+                    // You said X, NEXUS didn't get it, you rephrased as Y and it worked: X now means Y.
+                    if (missed != null && missed != key && Fuzzy.similarity(missed, key) >= 0.45 && finalSteps.size <= 3 && finalSteps.all { CommandDsl.toLine(it.command) != null }) {
+                        memory.remember(MemoryKind.LEARNED, missed, CommandDsl.toLines(finalSteps.map { it.command }))
+                    }
+                }
                 // Remember what a rough phrase meant, so next time it's instant.
                 if (ok) for ((k, cmds) in learnPairs) if (k.length > 2) memory.remember(MemoryKind.LEARNED, k, CommandDsl.toLines(cmds))
             }
@@ -396,7 +406,8 @@ class Nexus(
             .firstOrNull { m -> !m.node.editable && m.score >= 0.85 && s.clickableTarget(m.node).clickable && m.node.bounds.top > s.screenHeight / 30 }
             ?: return null
         val label = match.node.label
-        val after = ops.tap(match.node, s) ?: return Outcome.Failed("\"$label\" didn't respond to a tap.")
+        val after = ops.tapReliably(match.node, s) ?: return Outcome.Failed("\"$label\" didn't respond to a tap.")
+        memory.rememberSelector(s.packageName, "tap:$cleaned", match.node.viewId)
         if (cmd is Command.OpenChat || ScreenClassifier.classify(after) in setOf(ScreenKind.WA_CHAT, ScreenKind.IG_DM_THREAD)) {
             ctx.currentContactName = label; ctx.currentChatApp = after.packageName
         }
@@ -559,6 +570,8 @@ class Nexus(
             if (it is Outcome.Success && it.message == null) Outcome.Success("Added \"${cmd.title}\" to your calendar — check and save it.") else it
         }
         is Command.TakePhoto -> sys(system.openCamera(cmd.front, cmd.video))
+        is Command.TapRegion -> tapRegion(cmd)
+        is Command.ShareTo -> shareTo(cmd)
         Command.ClearNotifications -> {
             device.global(GlobalAction.NOTIFICATIONS); ops.awaitChange(null, 1500)
             val s = ops.screen()
@@ -674,9 +687,12 @@ class Nexus(
         if (pkg == "sms") return Outcome.Success()
         val cur = ops.screen()
         if (cur?.packageName == pkg) return Outcome.Success()
+        val t0 = System.currentTimeMillis()
         if (!device.launchApp(pkg)) return Outcome.Failed("I couldn't open ${label ?: pkg}.")
         memory.recordAppLaunch(pkg)
-        val ok = ops.waitFor(6000) { it.packageName == pkg }
+        // Wait as long as this app usually needs (learned), not a fixed guess.
+        val ok = ops.waitFor(memory.patience(pkg)) { it.packageName == pkg }
+        if (ok != null) memory.recordLoadTime(pkg, System.currentTimeMillis() - t0)
         return if (ok != null) Outcome.Success() else Outcome.Uncertain("I asked Android to open ${label ?: "the app"}, but it hasn't appeared yet.")
     }
 
@@ -757,13 +773,87 @@ class Nexus(
             return sys(if (cmd.send) system.sendSms(number, text) else system.composeSms(number, text))
         }
         val skill = appSkill(app) ?: return screenCommand(cmd)
+        val origin = ops.screen()?.packageName
         if (app != Packages.WHATSAPP && app != Packages.WHATSAPP_BUSINESS) {
             val r = ensureApp(app); if (r is Outcome.Failed) return r
         }
-        return skill.handle(cmd, env) ?: screenCommand(cmd)
+        val result = skill.handle(cmd, env) ?: screenCommand(cmd)
+        // Flash-and-return: if you were in another app (reading a PDF…), go straight back there.
+        if (cmd.send && result is Outcome.Success) returnTo(origin, app)
+        return result
+    }
+
+    /** "Tap top right", "double tap center": for unlabeled buttons, games and custom views. */
+    private suspend fun tapRegion(c: Command.TapRegion): Outcome {
+        val s = ops.screen()
+        val w = s?.screenWidth ?: 1080; val h = s?.screenHeight ?: 2400
+        val x = (w * listOf(0.15, 0.5, 0.85)[c.col]).toInt(); val y = (h * listOf(0.13, 0.5, 0.87)[c.row]).toInt()
+        val ok = when {
+            c.double -> device.doubleTapAt(x, y)
+            c.long -> device.longPressAt(x, y)
+            else -> device.tapAt(x, y)
+        }
+        ops.awaitChange(s, 1200)
+        return if (ok) Outcome.Success() else Outcome.Failed("That tap didn't go through.")
+    }
+
+    /**
+     * "Send this to Arjun": open the screen's Share menu, pick the contact (or
+     * WhatsApp → contact), send, then return to where you were.
+     */
+    private suspend fun shareTo(c: Command.ShareTo): Outcome {
+        val start = ops.screen() ?: return Outcome.Failed("I can't see the screen.")
+        val origin = start.packageName
+        val who = memory.contactAlias(c.contact) ?: c.contact
+        val shareBtn = ai.nexus.core.screen.SemanticUiDisambiguator(start).bestNavigation(listOf("Share", "Send", "Forward", "Share via"))
+            ?: ai.nexus.core.screen.ElementFinder(start).byLabel("Share", "Send", "Forward", minScore = 0.85)
+            ?: return Outcome.Failed("I don't see a share button here.", blocking = false)
+        ops.tapReliably(shareBtn, start)
+        var sheet = ops.waitForReady(3000) { snap -> snap.fingerprint != start.fingerprint } ?: return Outcome.Failed("The share menu didn't open.", blocking = false)
+        // Direct share: the contact may be listed right in the share sheet.
+        val direct = ai.nexus.core.screen.ElementFinder(sheet).rankByLabel(listOf(who)).firstOrNull { it.score >= 0.85 }?.node
+        val appLabel = c.app ?: "WhatsApp"
+        if (direct == null) {
+            val appBtn = ai.nexus.core.screen.ElementFinder(sheet).byLabel(appLabel, minScore = 0.85)
+                ?: run { ops.scrollAndWait(ai.nexus.core.device.Direction.RIGHT); ops.current()?.let { ai.nexus.core.screen.ElementFinder(it).byLabel(appLabel, minScore = 0.85) } }
+                ?: return Outcome.Failed("I couldn't find $appLabel in the share menu.", blocking = false)
+            ops.tapReliably(appBtn, sheet)
+            sheet = ops.waitForReady(6000) { snap -> snap.packageName != origin && snap.nodes.isNotEmpty() } ?: return Outcome.Failed("$appLabel didn't open.", blocking = false)
+            // Contact picker: search the name, tap the row.
+            val inList = ai.nexus.core.screen.ElementFinder(sheet).rankByLabel(listOf(who)).firstOrNull { it.score >= 0.85 && !it.node.editable }?.node
+            val row = inList ?: run {
+                ai.nexus.core.screen.ElementFinder(sheet).byLabel("Search", minScore = 0.85)?.let { ops.tapReliably(it, sheet) }
+                ops.typeText(who)
+                ops.waitForReady(4000) { snap -> ai.nexus.core.screen.ElementFinder(snap).rankByLabel(listOf(who)).any { it.score >= 0.85 && !it.node.editable } }
+                    ?.let { snap -> ai.nexus.core.screen.ElementFinder(snap).rankByLabel(listOf(who)).first { it.score >= 0.85 && !it.node.editable }.node }
+            } ?: return Outcome.Failed("I couldn't find $who to share with.", blocking = false)
+            ops.tapReliably(row, ops.current())
+        } else ops.tapReliably(direct, sheet)
+        // Confirm / send button (WhatsApp shows a green send arrow; the chat may then open).
+        ops.waitFor(4000) { snap -> ai.nexus.core.screen.SemanticUiDisambiguator(snap).submitFor(null) != null }?.let { snap ->
+            ai.nexus.core.screen.SemanticUiDisambiguator(snap).submitFor(null)?.let { b -> ops.tapReliably(b, snap) }
+        }
+        ops.awaitChange(ops.current(), 1500)
+        ctx.currentContactName = who
+        returnTo(origin, null)
+        return Outcome.Success("Sent to $who.")
+    }
+
+    /** Return to the app the user was in before a background task pulled the screen away. */
+    private suspend fun returnTo(origin: String?, taskApp: String?) {
+        if (!memory.settings.returnAfterTasks || origin == null || origin == taskApp || origin == selfPackage) return
+        if (origin in Packages.LAUNCHERS || origin == Packages.SYSTEM_UI) return
+        val now = ops.screen()?.packageName
+        if (now == origin) return
+        device.launchApp(origin)
+        ops.waitFor(2500) { it.packageName == origin }
     }
 
     @Volatile private var pendingConfirmed: Command.SendMessage? = null
+    /** Last request that wasn't understood (normalized text, time) — for learning from rephrasing. */
+    @Volatile private var lastMiss: Pair<String, Long>? = null
+    /** This app's own package, so we never "return" into NEXUS itself. */
+    @Volatile var selfPackage: String = "ai.nexus.app"
 
     private suspend fun readMessages(cmd: Command.ReadMessages): Outcome {
         val app = targetMessagingApp(cmd.app)
@@ -815,10 +905,61 @@ class Nexus(
             if (r !is Outcome.Success) return r
             return runCommand(Command.OpenResult(1, "video"))
         }
+        // Tier 1: headless "play from search" – no screen change at all.
         val r = sys(system.playFromSearch(cmd.query, pkg))
-        if (r is Outcome.Success) ctx.currentItem = "song: ${cmd.query}"
-        return if (r is Outcome.Success) Outcome.Success() else r
+        if (r is Outcome.Success) {
+            ctx.currentItem = "song: ${cmd.query}"
+            when (waitForMusic(1800)) {
+                true, null -> return Outcome.Success()   // playing (or this phone can't tell us)
+                false -> {}                               // nothing playing: fall through to the UI macro
+            }
+        }
+        // Tier 2: drive the music app's UI: search → wait for results to load → tap the best song → verify.
+        val target = pkg ?: listOf(Packages.YT_MUSIC, Packages.SPOTIFY).firstOrNull { p -> apps.resolve(p.substringAfterLast('.'))?.packageName == p }
+            ?: Packages.YT_MUSIC
+        return playViaUi(cmd.query, target)
     }
+
+    private suspend fun waitForMusic(ms: Long): Boolean? {
+        val deadline = System.currentTimeMillis() + ms
+        var last: Boolean? = system.isMusicActive() ?: return null
+        while (last == false && System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.delay(150)
+            last = system.isMusicActive()
+        }
+        return last
+    }
+
+    private suspend fun playViaUi(query: String, pkg: String): Outcome {
+        val opened = ensureApp(pkg)
+        if (opened is Outcome.Failed) return opened
+        val searched = generic.handle(Command.Search(query), env) ?: Outcome.Failed("I couldn't search in the music app.")
+        if (searched is Outcome.Failed) return searched
+        val q = Fuzzy.normalize(query)
+        repeat(3) { attempt ->
+            val s = ops.waitForReady(memory.patience(pkg, 8000)) { snap -> songRows(snap, q).isNotEmpty() }
+                ?: return Outcome.Failed("The search results didn't load.", blocking = false)
+            val row = songRows(s, q).firstOrNull() ?: return Outcome.Failed("I couldn't find \"$query\" in the results.", blocking = false)
+            ops.tapReliably(row, s)
+            when (waitForMusic(3000)) {
+                true, null -> { ctx.currentItem = "song: $query"; return Outcome.Success() }
+                false -> if (attempt == 2) return Outcome.Uncertain("I tapped the song, but it doesn't seem to be playing.")
+            }
+        }
+        return Outcome.Uncertain("I tapped the song, but couldn't confirm it's playing.")
+    }
+
+    /** Result rows that look like the song asked for, best first (songs before videos/albums). */
+    private fun songRows(s: ai.nexus.core.screen.ScreenSnapshot, q: String): List<ai.nexus.core.screen.UiNode> {
+        val firstWord = q.substringBefore(' ')
+        return ai.nexus.core.screen.ElementFinder(s).listItems()
+            .filter { !it.editable && it.bounds.top > s.screenHeight * 0.12 }
+            .map { n -> val t = Fuzzy.normalize(n.allText()); n to (if (t.contains(q)) 3 else if (t.contains(firstWord)) 1 else 0) + (if (t.contains("song")) 1 else 0) }
+            .filter { it.second > 0 }
+            .sortedWith(compareByDescending<Pair<ai.nexus.core.screen.UiNode, Int>> { it.second }.thenBy { it.first.bounds.top })
+            .map { it.first }
+    }
+
 
     private suspend fun readNotifications(app: String?): Outcome {
         val list = system.recentNotifications(25).filter { n -> app == null || n.appLabel.contains(app, true) || n.packageName.contains(app.lowercase()) }

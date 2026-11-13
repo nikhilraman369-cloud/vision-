@@ -688,6 +688,22 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     private val clock = "(\\d{1,2})(?:[:.](\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?|am|pm)?"
 
     private fun extras(c: String, ctx: String?): List<Command>? {
+        // Spatial grid: "tap top right", "double tap center", "long press bottom left corner"
+        rx("^(double ?tap|double click|long ?press|press and hold|tap|click|touch|press)(?: on| at)?(?: the)? (top|upper|middle|center|centre|bottom|lower)?(?:[ -](left|right|middle|center|centre))?(?: corner| side| part)?(?: of (?:the )?screen)?$").matchEntire(c)?.let {
+            val v = it.groupValues[2].lowercase(); val h = it.groupValues[3].lowercase()
+            if (v.isEmpty() && h.isEmpty()) return@let
+            val row = when (v) { "top", "upper" -> 0; "bottom", "lower" -> 2; else -> 1 }
+            val col = when (h) { "left" -> 0; "right" -> 2; else -> 1 }
+            val verb = it.groupValues[1].lowercase().replace(" ", "")
+            return listOf(Command.TapRegion(row, col, double = verb.startsWith("double"), long = verb.startsWith("long") || verb.startsWith("pressand")))
+        }
+        // "send this to Arjun" / "share this with Rahul on WhatsApp" / "ye Rahul ko bhejo"
+        rx("^(?:send|share|forward) (?:this|that|it|ye|yeh|this (?:video|reel|post|link|photo|page|song|short))(?: video| reel| post| link| photo| page)? (?:to|with) (.+?)(?: (?:on|via|using) (whatsapp|instagram|telegram|messages))?$").matchEntire(c)?.let {
+            return listOf(Command.ShareTo(it.groupValues[1].trim(), clean(it.groupValues[2])))
+        }
+        rx("^(?:ye|yeh|isko|ise) (.+?) ko (?:bhejo|bhej do|share karo|forward karo)$").matchEntire(c)?.let {
+            return listOf(Command.ShareTo(it.groupValues[1].trim()))
+        }
         rx("^(?:put (?:the )?phone (?:on|in) |set (?:the )?phone to |switch to |go to |turn on |enable |phone ko )?(silent|vibrate|vibration|general|ring|ringer|normal|sound)(?: mode)?(?: (?:on|pe|par|karo|kar do|mein dalo|me dalo))?$").matchEntire(c)?.let {
             val m = when (it.groupValues[1].lowercase()) { "silent" -> "silent"; "vibrate", "vibration" -> "vibrate"; else -> "normal" }
             return listOf(Command.Ringer(m))

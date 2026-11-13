@@ -86,15 +86,52 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
+        section("HANDS-FREE: \"HEY NEXUS\" (FREE, 100% OFFLINE)")
+        box.addView(label("Say \"Hey Nexus\" from anywhere, no tapping. After each command NEXUS keeps listening for 6.5 seconds, so you can chain commands. Speech is recognised on your phone by the free Vosk engine — nothing is sent online.", 13f, Ui.MUTED))
+        val vm = app.voskModels
+        val speechStatus = label("", 14f)
+        box.addView(speechStatus, Ui.matchWrap().apply { topMargin = dp(6) })
+        val modelIds = ai.nexus.app.voice.VoskModelManager.MODELS
+        val modelSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, modelIds.map { it.title })
+            setSelection(modelIds.indexOfFirst { it.id == s.speechModel }.coerceAtLeast(0))
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                    val mid = modelIds[pos].id
+                    if (mid != app.memory.settings.speechModel) { update { it.copy(speechModel = mid) }; vm.refresh(mid) }
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+            box.addView(this, Ui.matchWrap())
+        }
+        box.addView(button("Download offline speech model", Ui.CARD) { vm.download(app.memory.settings.speechModel) }, Ui.matchWrap().apply { topMargin = dp(4) })
+        toggle("Hands-free \"Hey Nexus\" (always listening)", s.handsFree) { v ->
+            update { it.copy(handsFree = v) }
+            if (v && vm.modelPath(app.memory.settings.speechModel) == null) {
+                Toast.makeText(this, "Download the offline speech model first.", Toast.LENGTH_LONG).show()
+            }
+            app.ensureHandsFree(this)
+        }
+        toggle("Keep listening with the screen off / in your pocket (uses more battery)", s.listenScreenOff) { v ->
+            update { it.copy(listenScreenOff = v) }; ai.nexus.app.voice.NexusVoiceService.refreshSettings()
+        }
+        toggle("Use Bluetooth earbuds' microphone (music sounds lower quality while it's on)", s.useEarbudMic) { v -> update { it.copy(useEarbudMic = v) } }
+        lifecycleScope.launch {
+            vm.state.collect { st ->
+                speechStatus.text = when (st) {
+                    ai.nexus.app.voice.VoskModelManager.State.Missing -> "Speech model: not downloaded"
+                    is ai.nexus.app.voice.VoskModelManager.State.Downloading -> "Downloading speech model… ${st.percent}%"
+                    ai.nexus.app.voice.VoskModelManager.State.Unpacking -> "Unpacking…"
+                    is ai.nexus.app.voice.VoskModelManager.State.Ready -> "✅ Offline speech ready"
+                    is ai.nexus.app.voice.VoskModelManager.State.Error -> "⚠ ${st.message}"
+                }
+                if (st is ai.nexus.app.voice.VoskModelManager.State.Ready) app.ensureHandsFree(this@SettingsActivity)
+            }
+        }
+
         section("SPEED")
         toggle("Quick confirmations (tick + vibration instead of saying \"Done\")", s.quietAcks) { v -> update { it.copy(quietAcks = v) } }
-
-        section("CLOUD AI (CLAUDE, OPTIONAL, PAID)")
-        box.addView(label("Optional. Without a key NEXUS still runs phone commands offline. With it, NEXUS can chat, answer questions and handle apps it doesn't know. Get a key at console.anthropic.com.", 13f, Ui.MUTED))
-        val key = field("Anthropic API key", app.apiKey, secret = true)
-        val model = field("Model", app.model)
-        toggle("Use cloud AI", s.useCloudAi) { v -> update { it.copy(useCloudAi = v) } }
-        toggle("Send screenshots to the AI when needed (better on apps with unlabeled buttons)", s.sendScreenshotsToCloud) { v -> update { it.copy(sendScreenshotsToCloud = v) } }
+        toggle("Return to the app I was in after sending or sharing in the background", s.returnAfterTasks) { v -> update { it.copy(returnAfterTasks = v) } }
 
         section("VOICE")
         val langs = listOf("auto" to "Auto (English + Hinglish)", "en" to "English", "hi" to "Hindi (हिन्दी)")
@@ -103,7 +140,7 @@ class SettingsActivity : AppCompatActivity() {
             setSelection(langs.indexOfFirst { it.first == s.language }.coerceAtLeast(0))
             box.addView(this, Ui.matchWrap())
         }
-        toggle("High-accuracy listening (uses internet; much better for Hinglish and names)", s.accurateListening) { v -> update { it.copy(accurateListening = v) } }
+        toggle("Tap-to-talk: use Google's online speech (more accurate, but not offline)", s.accurateListening) { v -> update { it.copy(accurateListening = v) } }
         toggle("Speak replies", s.speakResponses) { v -> update { it.copy(speakResponses = v) } }
         toggle("Continuous listening (keeps listening after each reply)", s.continuousListening) { v -> update { it.copy(continuousListening = v) } }
         toggle("Wake word (only respond after \"Hey Nexus\" in continuous mode)", s.wakeWordEnabled) { v -> update { it.copy(wakeWordEnabled = v) } }
@@ -123,8 +160,6 @@ class SettingsActivity : AppCompatActivity() {
         toggle("Ask before sending messages", s.confirmBeforeSending) { v -> update { it.copy(confirmBeforeSending = v) } }
 
         box.addView(button("Save") {
-            app.apiKey = key.text.toString().ifBlank { null }
-            app.model = model.text.toString().ifBlank { "claude-opus-5-5" }
             val lang = langs[spinner.selectedItemPosition].first
             update { it.copy(name = name.text.toString().ifBlank { null }, wakeWord = wake.text.toString().ifBlank { "hey nexus" }.lowercase(), language = lang) }
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()

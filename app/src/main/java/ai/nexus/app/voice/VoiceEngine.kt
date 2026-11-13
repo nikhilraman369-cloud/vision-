@@ -171,12 +171,8 @@ class VoiceEngine(
     fun extendConversation() { if (awakeUntil > System.currentTimeMillis()) awakeUntil = System.currentTimeMillis() + 20_000 }
 
     /** A short tick + vibration for quick confirmations (faster than speaking). */
+    /** After a quick confirmation: in continuous mode, listen again. (Vibration is done by HapticEngine.) */
     fun tick() = main.post {
-        runCatching {
-            val v = context.getSystemService(android.os.Vibrator::class.java)
-            if (android.os.Build.VERSION.SDK_INT >= 29) v?.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
-            else @Suppress("DEPRECATION") v?.vibrate(25)
-        }
         if (continuous) main.postDelayed({ if (tts?.isSpeaking != true && _state.value == VoiceState.OFF) startRecognizer() }, 250)
     }
 

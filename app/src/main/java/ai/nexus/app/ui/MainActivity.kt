@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mic: TextView
     private lateinit var input: EditText
     private lateinit var bubbleBtn: TextView
+    private lateinit var heyBtn: TextView
 
     private fun refreshBubbleBtn() { bubbleBtn.text = if (OverlayService.running) "Hide bubble" else "Show bubble" }
 
@@ -72,6 +73,18 @@ class MainActivity : AppCompatActivity() {
 
         // Second row: routines, help, and a debug helper to send exactly what NEXUS sees.
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(12), 0, dp(12), dp(4)) }
+        heyBtn = button("Hey Nexus: off", Ui.CARD) {
+            val on = !app.memory.settings.handsFree
+            if (on && app.voskModels.modelPath(app.memory.settings.speechModel) == null) {
+                android.widget.Toast.makeText(this, "First download the offline speech model in Settings.", android.widget.Toast.LENGTH_LONG).show()
+                startActivity(Intent(this, SettingsActivity::class.java)); return@button
+            }
+            if (on && !ensureMic()) return@button
+            app.memory.updateSettings { it.copy(handsFree = on) }
+            app.ensureHandsFree(this)
+        }.apply { textSize = 13f }
+        tools.addView(heyBtn)
+        tools.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
         tools.addView(button("Routines", Ui.CARD) { startActivity(Intent(this, RoutinesActivity::class.java)) }.apply { textSize = 13f })
         tools.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
         tools.addView(button("What can I say?", Ui.CARD) { startActivity(Intent(this, HelpActivity::class.java)) }.apply { textSize = 13f })
@@ -105,7 +118,7 @@ class MainActivity : AppCompatActivity() {
         mic = label("🎤", 22f).apply {
             gravity = Gravity.CENTER; background = Ui.rounded(Ui.ACCENT, dp(26).toFloat())
             contentDescription = "Talk to NEXUS"
-            setOnClickListener { if (ensureMic()) app.voice.toggle() }
+            setOnClickListener { if (ensureMic()) app.talk() }
         }
         row.addView(mic, LinearLayout.LayoutParams(dp(52), dp(52)).apply { leftMargin = dp(8) })
         root.addView(row, Ui.matchWrap())
@@ -114,6 +127,12 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch { app.chat.collect { render(it) } }
         lifecycleScope.launch { app.status.collect { status.text = it } }
+        lifecycleScope.launch {
+            kotlinx.coroutines.flow.combine(ai.nexus.app.voice.NexusVoiceService.on, ai.nexus.app.voice.NexusVoiceService.state) { on, st -> on to st }.collect { (on, st) ->
+                heyBtn.text = if (!on) "Hey Nexus: off" else if (st == ai.nexus.core.voice.HandsFreeState.ACTIVE_COMMAND_WINDOW) "Hey Nexus: listening" else "Hey Nexus: on"
+                heyBtn.background = Ui.rounded(if (on) Ui.OK else Ui.CARD, dp(12).toFloat())
+            }
+        }
         lifecycleScope.launch {
             app.voice.state.collect { v ->
                 mic.background = Ui.rounded(if (v == VoiceState.LISTENING || v == VoiceState.HEARING) Ui.OK else Ui.ACCENT, dp(26).toFloat())
@@ -125,7 +144,7 @@ class MainActivity : AppCompatActivity() {
         if (intent?.action == Intent.ACTION_ASSIST && ensureMic()) app.voice.startListening()
     }
 
-    override fun onResume() { super.onResume(); renderSetup(); refreshBubbleBtn() }
+    override fun onResume() { super.onResume(); renderSetup(); refreshBubbleBtn(); app.ensureHandsFree(this) }
 
     /**
      * Copies what NEXUS saw on the last app screen plus the recent conversation,
@@ -194,7 +213,7 @@ class MainActivity : AppCompatActivity() {
             Step("Phone brain (free)", "Download once so NEXUS understands rough commands offline", app.brainManager.installedModel() != null) {
                 startActivity(Intent(this, SettingsActivity::class.java))
             },
-            Step("Cloud AI (optional, paid)", "Claude API key for conversation and questions", app.apiKey != null || app.brainManager.installedModel() != null) {
+            Step("Offline voice (free)", "Download the speech model for hands-free \"Hey Nexus\"", app.voskModels.modelPath(app.memory.settings.speechModel) != null) {
                 startActivity(Intent(this, SettingsActivity::class.java))
             },
         )

@@ -44,8 +44,18 @@ data class UserSettings(
     val usePhoneBrain: Boolean = true,
     /** Short tick/vibration instead of speaking "Done" after every action. */
     val quietAcks: Boolean = true,
+    /** After a background task (sending, sharing), jump back to the app you were in. */
+    val returnAfterTasks: Boolean = true,
+    /** Always-on "Hey Nexus" with the free offline speech engine. */
+    val handsFree: Boolean = false,
+    /** Keep listening for "Hey Nexus" while the screen is off (uses more battery). */
+    val listenScreenOff: Boolean = false,
+    /** Use Bluetooth earbuds' microphone when connected. */
+    val useEarbudMic: Boolean = true,
+    /** Offline speech model: "en-in" (Indian English) or "hi" (Hindi). */
+    val speechModel: String = "en-in",
     /** Use the online speech engine (more accurate, especially Hinglish and names). */
-    val accurateListening: Boolean = true,
+    val accurateListening: Boolean = false,
     val sendScreenshotsToCloud: Boolean = false,
 )
 
@@ -58,6 +68,10 @@ data class MemoryData(
     val appUsage: Map<String, Int> = emptyMap(),
     /** recent conversation turns kept across sessions (only when memory is enabled). */
     val recentTurns: List<Turn> = emptyList(),
+    /** "package|intent" → view id that worked last time (learned UI selectors). */
+    val selectors: Map<String, String> = emptyMap(),
+    /** package → typical time (ms) for the app to open, learned from use. */
+    val loadMs: Map<String, Int> = emptyMap(),
 )
 
 @Serializable
@@ -168,6 +182,26 @@ class LongTermMemory(private val storage: MemoryStorage) {
         if (!enabled) return
         mutate { d -> d.copy(appUsage = d.appUsage + (pkg to ((d.appUsage[pkg] ?: 0) + 1))) }
     }
+
+    fun selector(pkg: String?, intent: String): String? = pkg?.let { data.selectors["$it|${Fuzzy.normalize(intent)}"] }
+
+    fun rememberSelector(pkg: String?, intent: String, viewId: String?) {
+        if (pkg == null || viewId.isNullOrBlank() || !enabled) return
+        val k = "$pkg|${Fuzzy.normalize(intent)}"
+        if (data.selectors[k] == viewId) return
+        mutate { d -> d.copy(selectors = (d.selectors + (k to viewId)).entries.toList().takeLast(400).associate { it.key to it.value }) }
+    }
+
+    /** Rolling average of how long [pkg] takes to open, used to size wait windows. */
+    fun recordLoadTime(pkg: String, ms: Long) {
+        if (!enabled) return
+        val prev = data.loadMs[pkg]
+        val avg = if (prev == null) ms.toInt() else ((prev * 3 + ms) / 4).toInt()
+        mutate { d -> d.copy(loadMs = d.loadMs + (pkg to avg)) }
+    }
+
+    /** How long to wait for [pkg] before giving up: 2× its usual time, between 4 and 10 s. */
+    fun patience(pkg: String?, base: Long = 6000): Long = (pkg?.let { data.loadMs[it] }?.let { it * 2L } ?: base).coerceIn(4000, 10_000)
 
     fun topApps(n: Int = 8): List<String> = data.appUsage.entries.sortedByDescending { it.value }.take(n).map { it.key }
 
