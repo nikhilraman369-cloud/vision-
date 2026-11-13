@@ -166,4 +166,63 @@ class V2Test {
         run(n, "why is the sky blue?")
         assertTrue(out.any { it.contains("Download brain") }, out.toString())
     }
+
+    private fun one(text: String): Command = IntentParser().parse(text).steps.single().command
+
+    @Test fun openEndedAndTimedRequestsAreUnderstood() {
+        assertEquals(Command.AutoScroll(ai.nexus.core.device.Direction.UP, 2), one("keep scrolling up"))
+        assertEquals(Command.AutoScroll(ai.nexus.core.device.Direction.DOWN, 1), one("keep scrolling down slowly"))
+        assertEquals(Command.AutoScroll(ai.nexus.core.device.Direction.DOWN, 1), one("scroll down slowly"))
+        assertEquals(ai.nexus.core.device.Direction.UP, (one("upar scroll karte raho") as Command.AutoScroll).direction)
+        assertEquals(Command.RepeatEvery(15, "next"), one("scroll the reel after 15 seconds"))
+        assertEquals(10, (one("next reel every 10 seconds") as Command.RepeatEvery).seconds)
+        assertEquals(Command.After(10, "turn on the torch"), one("after 10 seconds turn on the torch"))
+        assertEquals(300, (one("call mom in 5 minutes") as Command.After).seconds)
+        assertTrue(one("message rahul saying i will be there in 10 minutes") is Command.SendMessage)
+        assertTrue(IntentParser().parse("remind me to drink water in 30 minutes").steps.none { it.command is Command.After })
+        val s1 = one("schedule a message to rahul tomorrow at 9 pm saying happy birthday") as Command.ScheduleAt
+        assertEquals("tomorrow at 9 pm", s1.whenText); assertTrue(s1.command.contains("happy birthday") && s1.command.contains("rahul"), s1.command)
+        assertTrue(one("at 9 pm message rahul saying happy birthday") is Command.ScheduleAt)
+        assertTrue(one("message rahul at 9 pm saying happy birthday") is Command.ScheduleAt)
+        assertTrue(one("kal subah 9 baje rahul ko message karo ki happy birthday") is Command.ScheduleAt)
+        assertEquals(Command.LoopSpeed(true), one("faster"))
+        assertEquals(Command.ListScheduled, one("what have i scheduled"))
+    }
+
+    @Test fun timeExpressionsResolveToTheFuture() {
+        val now = Calendar.getInstance().apply { set(2026, 10, 13, 15, 0, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
+        fun at(e: String) = Calendar.getInstance().apply { timeInMillis = ai.nexus.core.nlu.Timing.resolve(e, now)!! }
+        at("tomorrow at 9 pm").let { assertEquals(14, it.get(Calendar.DAY_OF_MONTH)); assertEquals(21, it.get(Calendar.HOUR_OF_DAY)) }
+        at("at 9").let { assertEquals(13, it.get(Calendar.DAY_OF_MONTH)); assertEquals(21, it.get(Calendar.HOUR_OF_DAY)) }
+        at("kal subah 9 baje").let { assertEquals(14, it.get(Calendar.DAY_OF_MONTH)); assertEquals(9, it.get(Calendar.HOUR_OF_DAY)) }
+        at("tonight").let { assertEquals(13, it.get(Calendar.DAY_OF_MONTH)); assertEquals(21, it.get(Calendar.HOUR_OF_DAY)) }
+        at("raat 2 baje").let { assertEquals(14, it.get(Calendar.DAY_OF_MONTH)); assertEquals(2, it.get(Calendar.HOUR_OF_DAY)) }
+    }
+
+    @Test fun keepScrollingRunsUntilStop() {
+        val phone = ScreenPhone()
+        val (n, _, _) = setup(phone)
+        run(n, "keep scrolling down")
+        assertNotNull(n.loop.value)
+        runBlocking { kotlinx.coroutines.delay(2600) }
+        run(n, "stop")
+        val count = phone.log.count { it.startsWith("swipe:") }
+        assertTrue(count >= 1, phone.log.toString())
+        runBlocking { kotlinx.coroutines.delay(1500) }
+        assertEquals(count, phone.log.count { it.startsWith("swipe:") }, "no swipes after stop")
+        assertEquals(null, n.loop.value)
+    }
+
+    @Test fun scheduleListAndCancel() {
+        val (n, out, _) = setup(ScreenPhone())
+        val armed = ArrayList<String>()
+        n.onSchedule = { armed += it.id }
+        run(n, "at 9 pm message rahul saying happy birthday")
+        assertEquals(1, n.life!!.data.scheduled.size)
+        assertEquals(1, armed.size)
+        run(n, "what have i scheduled")
+        assertTrue(out.last().contains("happy birthday"), out.toString())
+        run(n, "cancel the scheduled message to rahul")
+        assertTrue(n.life!!.data.scheduled.isEmpty())
+    }
 }

@@ -19,7 +19,8 @@ sealed interface Outcome {
 sealed interface NexusEvent {
     data class StateChanged(val state: AgentState) : NexusEvent
     /** Something to show and (optionally) speak. */
-    data class Reply(val text: String, val speak: Boolean = true) : NexusEvent
+    /** [continued] = the next sentence of a reply that is still being generated (append to the last line). */
+    data class Reply(val text: String, val speak: Boolean = true, val continued: Boolean = false) : NexusEvent
     data class StepStarted(val index: Int, val total: Int, val description: String) : NexusEvent
     data class StepFinished(val index: Int, val description: String, val outcome: Outcome) : NexusEvent
     data class Error(val message: String) : NexusEvent

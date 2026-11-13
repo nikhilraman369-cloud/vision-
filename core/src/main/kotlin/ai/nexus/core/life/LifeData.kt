@@ -182,6 +182,17 @@ data class LifeData(
     /** Temporarily allowed blocked apps: package → until ms. */
     val overrides: Map<String, Long> = emptyMap(),
     val lastBriefDay: Int = 0,
+    val scheduled: List<ScheduledAction> = emptyList(),
+)
+
+/** Something to do later: "at 9 pm message Rahul saying happy birthday". [text] is run as if you said it. */
+@Serializable
+data class ScheduledAction(
+    val id: String = newId(),
+    val text: String,
+    val atMs: Long,
+    val createdMs: Long = System.currentTimeMillis(),
+    val done: Boolean = false,
 )
 
 /** Persistent store for tasks, modes, skills, study, habits, notifications and diagnostics. */

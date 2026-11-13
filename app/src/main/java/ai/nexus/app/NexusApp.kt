@@ -98,13 +98,17 @@ class NexusApp : Application() {
         loadVoice()
         life.store.cleanup()
         scope.launch { refreshVocabulary() }
+        nexus.onSchedule = { a -> runCatching { ai.nexus.app.life.ReminderScheduler.scheduleAction(this@NexusApp, a) } }
+        nexus.onUnschedule = { id -> runCatching { ai.nexus.app.life.ReminderScheduler.cancelAction(this@NexusApp, id) } }
         runCatching { ai.nexus.app.life.ReminderScheduler.scheduleAll(this@NexusApp) }
 
         scope.launch {
             nexus.events.collect { e ->
                 when (e) {
                     is NexusEvent.Reply -> {
-                        add(ChatLine(false, e.text))
+                        val last = _chat.value.lastOrNull()
+                        if (e.continued && last != null && !last.fromUser) _chat.value = _chat.value.dropLast(1) + last.copy(text = last.text + " " + e.text)
+                        else add(ChatLine(false, e.text))
                         if (e.speak) voice.speak(e.text)
                     }
                     is NexusEvent.StepStarted -> _status.value = if (e.total > 1) "Step ${e.index}/${e.total}: ${e.description}" else e.description
@@ -114,7 +118,7 @@ class NexusApp : Application() {
                         // Keep what the screen looked like when something went wrong, for "Copy screen info".
                         runCatching { device.snapshot() }.getOrNull()?.takeIf { it.packageName != packageName }?.let { lastAppScreen = it.toPromptText(150) }
                     }
-                    is NexusEvent.StateChanged -> _status.value = when (e.state.also { if (it == AgentState.IDLE) scope.launch { kotlinx.coroutines.delay(700); if (nexus.state.value == AgentState.IDLE) voice.commandFinished() } }) {
+                    is NexusEvent.StateChanged -> _status.value = when (e.state.also { if (it == AgentState.THINKING && memory.settings.earcons) sounds.thinking() }.also { if (it == AgentState.IDLE) scope.launch { kotlinx.coroutines.delay(700); if (nexus.state.value == AgentState.IDLE) voice.commandFinished() } }) {
                         AgentState.IDLE -> "Ready"
                         AgentState.THINKING -> "Thinking…"
                         AgentState.EXECUTING -> "Working…"
@@ -187,6 +191,18 @@ class NexusApp : Application() {
     }
 
     fun clearStuck() { _stuck.value = null }
+
+    /** A scheduled action is due. Behind a PIN lock it waits for you to unlock (via a notification). */
+    fun runScheduledAction(id: String, force: Boolean = false) {
+        val a = life.data.scheduled.firstOrNull { it.id == id && !it.done } ?: return
+        val km = getSystemService(android.app.KeyguardManager::class.java)
+        if (!force && km?.isKeyguardLocked == true && km.isKeyguardSecure && ai.nexus.app.voice.ScreenWakeController.needsScreen(this, a.text)) {
+            ai.nexus.app.life.ReminderScheduler.notifyRunWhenUnlocked(this, id, a.text); return
+        }
+        getSystemService(android.app.NotificationManager::class.java)?.cancel(id.hashCode())
+        add(ChatLine(false, "⏰ Scheduled: ${a.text}", detail = true))
+        ai.nexus.app.voice.ScreenWakeController.prepareFor(this, this, a.text) { nexus.runScheduled(id) }
+    }
 
     /** Load the chosen neural voice pack if it's downloaded. */
     fun loadVoice() {

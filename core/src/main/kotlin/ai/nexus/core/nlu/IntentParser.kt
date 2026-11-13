@@ -41,6 +41,11 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.TeachStop(clean(m.groupValues[1])), normalized, 0.95)))
         }
 
+        // Open-ended / timed: "keep scrolling up", "next reel every 15 seconds", "at 9 pm message Rahul …".
+        Timing.parse(TextNormalizer.stripFillers(normalized), ::isConcrete, ::isMessageText)?.let {
+            return ParsedRequest(utterance, normalized, listOf(ParsedStep(it, normalized, 0.95)))
+        }
+
         val clauses = CommandSplitter.split(normalized)
         val steps = ArrayList<ParsedStep>()
         var appContext: String? = null
@@ -100,6 +105,11 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     }
 
     // ---------------------------------------------------------------- clauses
+
+    /** True when [text] becomes real phone actions (not a question or something unknown). */
+    fun isConcrete(text: String): Boolean = parse(text).steps.let { st -> st.isNotEmpty() && st.none { it.command is Command.Chat || it.command is Command.Agentic } }
+
+    private fun isMessageText(text: String): Boolean = parse(text).steps.any { it.command is Command.SendMessage || it.command is Command.Write || it.command is Command.Email }
 
     fun parseClause(c: String, appContext: String? = null, depth: Int = 0): List<Command> {
         controlOnly(c)?.let { return listOf(it) }
@@ -693,6 +703,10 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
 
     /** Productivity, modes, study, memory questions, corrections. */
     private fun life(c: String, ctx: String?): List<Command>? {
+        if (rx("^(?:what(?:'s| is| have i| did i)? (?:scheduled|i scheduled|i have scheduled)|(?:show|list|read)(?: me)?(?: my| all)? scheduled(?: messages?| tasks?| actions?)?|(?:my )?scheduled (?:messages|actions|tasks)|what is (?:on )?my schedule(?:d)?)\\??$").matches(c)) return listOf(Command.ListScheduled)
+        rx("^(?:cancel|delete|remove|stop)\\s+(all\\s+)?(?:the\\s+|my\\s+)?scheduled(?:\\s+(?:message|messages|action|actions|task|tasks))?(?:\\s+(?:to|for)\\s+(.+))?$").matchEntire(c)?.let { m ->
+            return listOf(Command.CancelScheduled(m.groupValues[2].trim().ifBlank { null }))
+        }
         rx("^(?:no[,.!]?\\s+)?(?:i meant|i mean|i said|mera matlab(?: tha)?|matlab)\\s+(.+?)(?:\\s+tha)?$").matchEntire(c)?.let { return listOf(Command.MeantInstead(it.groupValues[1].trim())) }
         rx("^(?:always|hamesha) (?:use|message|text|contact) (whatsapp|instagram|telegram|sms|messages|text) (?:for|to|with) (.+)$").matchEntire(c)?.let {
             return listOf(Command.PreferApp(normalizeContactRef(it.groupValues[2].trim()), it.groupValues[1].lowercase()))

@@ -11,13 +11,21 @@ fun interface TextGenerator {
 }
 
 /**
+ * Streaming generation: [onText] receives the full text so far, as it grows,
+ * and returns false to stop early. Returns the final text.
+ */
+fun interface TextStreamer {
+    suspend fun stream(prompt: String, onText: (String) -> Boolean): String
+}
+
+/**
  * The free, offline "brain". A small on-device model translates rough or
  * unusual commands into NEXUS action lines (short output = fast), using
  * what is visible on screen. It is only consulted when the built-in rules
  * don't understand a request; the result is cached so the same phrase is
  * instant next time.
  */
-class PhoneBrain(private val gen: TextGenerator) {
+class PhoneBrain(private val gen: TextGenerator, private val streamer: TextStreamer? = null) {
 
     /** Visible, meaningful labels – the model picks from these for "tap". */
     fun screenSummary(s: ScreenSnapshot?, max: Int = 28): String {
@@ -57,32 +65,57 @@ class PhoneBrain(private val gen: TextGenerator) {
 
     /**
      * Free, offline conversation: answers questions and small talk with the
-     * on-device model. Short replies (they are spoken aloud). Null if busy or empty.
+     * on-device model. Short replies (they are spoken aloud). With a streaming
+     * engine, each finished sentence goes to [onSentence] the moment it is
+     * written, so NEXUS starts talking after the first sentence instead of
+     * waiting for the whole answer. Null if busy or empty.
      */
-    suspend fun answer(question: String, facts: String, history: List<Pair<String, String>>, boss: String, now: String): String? {
+    suspend fun answer(
+        question: String, facts: String, history: List<Pair<String, String>>, boss: String, now: String,
+        onSentence: ((String) -> Unit)? = null,
+    ): String? {
         if (!busyFlag.compareAndSet(false, true)) return null
         try {
+            // Kept short on purpose: a shorter prompt is read faster by the phone's model.
             val p = buildString {
                 append("<|im_start|>system\n")
-                append("You are NEXUS, a loyal, witty, warm personal assistant with the manner of a calm British butler. ")
-                append("Address the user as \"").append(boss).append("\". Reply in the user's language (English, Hindi or Hinglish). ")
-                append("Answer helpfully and correctly in 1 to 3 short spoken sentences. No lists, no markdown, no emojis. ")
-                append("If you don't know something, say so briefly. Current time: ").append(now).append(".\n")
-                if (facts.isNotBlank()) append("What you know about the user:\n").append(facts.take(900)).append('\n')
+                append("You are NEXUS, a witty, warm assistant with the manner of a calm British butler. Call the user \"").append(boss)
+                append("\". Reply in the user's language (English, Hindi or Hinglish), correctly, in 1-3 short spoken sentences. No lists, markdown or emojis. Now: ").append(now).append(".\n")
+                if (facts.isNotBlank()) append("About the user: ").append(facts.take(400).replace('\n', ';')).append('\n')
                 append("<|im_end|>\n")
-                for ((role, text) in history.takeLast(6)) {
-                    append("<|im_start|>").append(if (role == "user") "user" else "assistant").append('\n').append(text.take(300)).append("<|im_end|>\n")
+                for ((role, text) in history.takeLast(4)) {
+                    append("<|im_start|>").append(if (role == "user") "user" else "assistant").append('\n').append(text.take(200)).append("<|im_end|>\n")
                 }
                 append("<|im_start|>user\n").append(question).append("<|im_end|>\n<|im_start|>assistant\n")
             }
-            val out = gen.generate(p).substringBefore("<|im_end|>").substringBefore("<|im_start|>")
-                .replace(Regex("[*#_`]+"), "").replace(Regex("\\s+"), " ").trim()
+            val st = streamer
+            if (st != null && onSentence != null) {
+                var emitted = 0
+                var consumed = 0
+                val out = st.stream(p) { soFar ->
+                    val body = clean(soFar.substringBefore("<|im_end|>").substringBefore("<|im_start|>"))
+                    val ended = soFar.contains("<|im_end|>") || soFar.contains("<|im_start|>")
+                    // Emit every sentence that is complete (followed by more text).
+                    while (emitted < MAX_SENTENCES) {
+                        val rest = body.substring(consumed.coerceAtMost(body.length))
+                        val m = SENTENCE_END.find(rest) ?: break
+                        val sentence = rest.substring(0, m.range.last + 1).trim()
+                        consumed += m.range.last + 1
+                        if (sentence.isNotEmpty()) { onSentence(sentence); emitted++ }
+                    }
+                    !(ended || emitted >= MAX_SENTENCES)
+                }
+                val body = clean(out.substringBefore("<|im_end|>").substringBefore("<|im_start|>"))
+                if (emitted < MAX_SENTENCES) body.substring(consumed.coerceAtMost(body.length)).trim().takeIf { it.isNotEmpty() }?.let { onSentence(it); emitted++ }
+                return body.takeIf { it.isNotBlank() }
+            }
+            val out = clean(gen.generate(p).substringBefore("<|im_end|>").substringBefore("<|im_start|>"))
             if (out.isBlank()) return null
-            // Keep it speakable: at most ~3 sentences.
-            val sentences = out.split(Regex("(?<=[.!?।])\\s+"))
-            return sentences.take(3).joinToString(" ").take(420)
+            return out.split(Regex("(?<=[.!?।])\\s+")).take(MAX_SENTENCES).joinToString(" ").take(420)
         } finally { busyFlag.set(false) }
     }
+
+    private fun clean(s: String) = s.replace(Regex("[*#_`]+"), "").replace(Regex("\\s+"), " ").trimStart()
 
     /** Step-by-step screen agent for unfamiliar screens: one action per call. */
     fun startAgent(goal: String, first: ScreenSnapshot?): AgentSession = object : AgentSession {
@@ -115,14 +148,19 @@ class PhoneBrain(private val gen: TextGenerator) {
     }
 
     companion object {
+        private const val MAX_SENTENCES = 3
+        /** End of a sentence followed by a space (so we know the sentence is complete). */
+        private val SENTENCE_END = Regex("[.!?।](?=\\s)")
         val SYSTEM = """
 Turn the phone command (English/Hindi/Hinglish, may be rough) into action lines, one per line, nothing else.
-Actions: open_app NAME, tap LABEL, type TEXT, type_send TEXT, send, search Q, open_result N, goto reels|shorts|home|messages|profile, next, previous, like, save, follow, subscribe, comments, comment TEXT, play SONG, pause, resume, next_track, back, home, scroll down|up, message NAME | TEXT, call NAME, toggle wifi|bluetooth|flashlight on|off, volume N|up|down, brightness N|up|down, read_screen, alarm H:MM, timer SECONDS, note TEXT, unknown
+Actions: open_app NAME, tap LABEL, type TEXT, type_send TEXT, send, search Q, open_result N, goto reels|shorts|home|messages|profile, next, previous, like, save, follow, subscribe, comments, comment TEXT, play SONG, pause, resume, next_track, back, home, scroll down|up, message NAME | TEXT, call NAME, toggle wifi|bluetooth|flashlight on|off, volume N|up|down, brightness N|up|down, read_screen, alarm H:MM, timer SECONDS, note TEXT, autoscroll up|down slow|normal|fast, every SECONDS: WORDS, after SECONDS: WORDS, at TIME: WORDS, unknown
 If the user names something in "visible", use tap with that exact label. Keep typed text exactly.
 Example: visible: Editorial Team ; Family | command: editorial wala group kholo
 tap Editorial Team
 Example: visible: Believer ; Thunder | command: thunder chala de
 tap Thunder
+Example: visible: Chats ; Rahul | command: chat ko upar karte raho
+autoscroll up normal
 Example: visible: Phone ; Camera | command: insta pe reels dikha aur like kar
 open_app Instagram
 goto reels

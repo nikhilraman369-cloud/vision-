@@ -120,11 +120,13 @@ class NexusAccessibilityService : AccessibilityService() {
     private fun startListeningPill() {
         val app = NexusApp.get(this)
         pillScope.launch {
-            kotlinx.coroutines.flow.combine(app.voice.state, app.voice.partial, app.nexus.state) { v, p, a -> Triple(v, p, a) }.collect { (v, p, a) ->
+            kotlinx.coroutines.flow.combine(app.voice.state, app.voice.partial, app.nexus.state, app.nexus.loop) { v, p, a, l -> listOf(v, p, a, l) }.collect { (v0, p0, a0, l0) ->
+                val v = v0 as ai.nexus.app.voice.VoiceState; val p = p0 as String; val a = a0 as ai.nexus.core.agent.AgentState; val loop = l0 as String?
                 val text = when {
                     v == ai.nexus.app.voice.VoiceState.HEARING -> "🎙  " + p.ifBlank { "Listening…" }
                     v == ai.nexus.app.voice.VoiceState.LISTENING -> "🎙  Listening… " + p
                     app.voice.inConversation() && a == ai.nexus.core.agent.AgentState.THINKING -> "✦  Thinking…"
+                    loop != null -> "⟳  $loop · tap to stop"
                     else -> null
                 }
                 showPill(text?.trim())
@@ -147,7 +149,7 @@ class NexusAccessibilityService : AccessibilityService() {
             setPadding((18 * dp).toInt(), (10 * dp).toInt(), (18 * dp).toInt(), (10 * dp).toInt())
             background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 24 * dp; setColor(0xF0151526.toInt()); setStroke((2 * dp).toInt(), 0xFF00C2A8.toInt()) }
             maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.START
-            setOnClickListener { NexusApp.get(this@NexusAccessibilityService).voice.stopListening() }
+            setOnClickListener { val a = NexusApp.get(this@NexusAccessibilityService); if (a.nexus.loop.value != null) a.nexus.stopLoop() else a.voice.stopListening() }
             val lp = android.view.WindowManager.LayoutParams(
                 android.view.WindowManager.LayoutParams.WRAP_CONTENT, android.view.WindowManager.LayoutParams.WRAP_CONTENT,
                 android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,

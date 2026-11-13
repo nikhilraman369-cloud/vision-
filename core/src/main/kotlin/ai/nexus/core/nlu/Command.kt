@@ -113,6 +113,20 @@ sealed interface Command {
     data class PreferApp(val contact: String, val app: String) : Command
     /** "pause notification watching", "mute voice", "not now" */
     data class Toggle(val what: String, val on: Boolean) : Command
+    // ---- open-ended, time-based
+    /** Keep scrolling until "stop". speed 0 (very slow) … 4 (very fast). */
+    data class AutoScroll(val direction: ai.nexus.core.device.Direction, val speed: Int = 2) : Command
+    /** "faster" / "slower" while something is auto-scrolling or repeating. */
+    data class LoopSpeed(val faster: Boolean) : Command
+    /** Do [command] (plain words) every [seconds] until "stop". */
+    data class RepeatEvery(val seconds: Int, val command: String) : Command
+    /** Do [command] once after [seconds]. */
+    data class After(val seconds: Int, val command: String) : Command
+    /** Do [command] at a clock time / day ("tomorrow at 9 pm"). */
+    data class ScheduleAt(val whenText: String, val command: String) : Command
+    data object ListScheduled : Command
+    /** Cancel scheduled actions matching [what] (null = all). */
+    data class CancelScheduled(val what: String?) : Command
     /** A question or conversation – answered, not executed. */
     data class Chat(val text: String) : Command
     /** A phone task the rule-based parser could not break down – handed to the LLM agent. */

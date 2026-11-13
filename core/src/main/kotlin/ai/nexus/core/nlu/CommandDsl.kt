@@ -28,6 +28,10 @@ object CommandDsl {
     fun toLines(commands: List<Command>): String = commands.mapNotNull(::toLine).joinToString("\n")
 
     fun toLine(c: Command): String? = when (c) {
+        is Command.AutoScroll -> "autoscroll ${c.direction.name.lowercase()} ${when { c.speed <= 1 -> "slow"; c.speed >= 3 -> "fast"; else -> "normal" }}"
+        is Command.RepeatEvery -> "every ${c.seconds}: ${c.command}"
+        is Command.After -> "after ${c.seconds}: ${c.command}"
+        is Command.ScheduleAt -> "at ${c.whenText}: ${c.command}"
         is Command.OpenApp -> "open_app ${c.app}"
         is Command.Tap -> (if (c.long) "long_press " else "tap ") + c.label
         is Command.Write -> when (c.submit) { true -> "type_send ${c.text}"; else -> "type ${c.text}" }
@@ -84,6 +88,10 @@ object CommandDsl {
             "open_result", "result" -> Command.OpenResult(arg.toIntOrNull() ?: Numbers.ordinal(arg) ?: 1)
             "goto", "go_to", "section" -> sectionNames[arg.lowercase()]?.let { Command.GoTo(it) }
             "next" -> Command.NextItem
+            "autoscroll", "auto_scroll" -> arg.lowercase().let { a -> Command.AutoScroll(if (a.contains("up")) Direction.UP else Direction.DOWN, when { a.contains("slow") -> 1; a.contains("fast") -> 3; else -> 2 }) }
+            "every" -> Regex("^(\\d+)\\s*[:|]\\s*(.+)$").find(arg)?.let { Command.RepeatEvery(it.groupValues[1].toInt().coerceAtLeast(2), it.groupValues[2]) }
+            "after" -> Regex("^(\\d+)\\s*[:|]\\s*(.+)$").find(arg)?.let { Command.After(it.groupValues[1].toInt(), it.groupValues[2]) }
+            "at" -> Regex("^(.+?)\\s*[:|]\\s+(.+)$").find(arg)?.let { Command.ScheduleAt(it.groupValues[1], it.groupValues[2]) }
             "previous", "prev" -> Command.PreviousItem
             "like" -> Command.React(Reaction.LIKE)
             "unlike" -> Command.React(Reaction.LIKE, false)

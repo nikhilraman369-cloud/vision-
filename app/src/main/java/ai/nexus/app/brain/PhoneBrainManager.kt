@@ -49,7 +49,56 @@ class PhoneBrainManager(private val context: Context, private val scope: Corouti
     /** Time the last answer took, for the Settings screen. */
     @Volatile var lastLatencyMs: Long = 0
 
-    val brain: PhoneBrain = PhoneBrain(TextGenerator { prompt -> generate(prompt) })
+    val brain: PhoneBrain = PhoneBrain(TextGenerator { prompt -> generate(prompt) }, ai.nexus.core.agent.TextStreamer { prompt, onText -> stream(prompt, onText) })
+
+    /**
+     * Streaming answer: partial text arrives as the model writes it, so NEXUS can
+     * start speaking after the first sentence. Uses MediaPipe's async API when this
+     * version has it (looked up at runtime), else falls back to one-shot generation.
+     */
+    private suspend fun stream(prompt: String, onText: (String) -> Boolean): String = withContext(Dispatchers.IO) {
+        if (!runLock.tryLock()) throw IllegalStateException("Phone brain is busy")
+        try {
+            val engine = llm ?: throw IllegalStateException("Phone brain not loaded")
+            val t0 = System.currentTimeMillis()
+            val session = LlmInferenceSession.createFromOptions(
+                engine, LlmInferenceSession.LlmInferenceSessionOptions.builder().setTopK(1).setTemperature(0f).build(),
+            )
+            try {
+                session.addQueryChunk(prompt)
+                val async = session.javaClass.methods.firstOrNull { it.name == "generateResponseAsync" && it.parameterTypes.size == 1 && it.parameterTypes[0].isInterface }
+                if (async == null) {
+                    val full = session.generateResponse(); onText(full); return@withContext full
+                }
+                val sb = StringBuilder()
+                val finished = java.util.concurrent.CountDownLatch(1)
+                val enough = java.util.concurrent.CountDownLatch(1)
+                val stoppedFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+                val listener = java.lang.reflect.Proxy.newProxyInstance(async.parameterTypes[0].classLoader, arrayOf(async.parameterTypes[0])) { _, m, args ->
+                    if (m.name == "run" && args != null && args.size >= 2) {
+                        val partial = args[0] as? String ?: ""
+                        val isDone = args[1] as? Boolean ?: false
+                        val text = synchronized(sb) { sb.append(partial); sb.toString() }
+                        if (!stoppedFlag.get() && !onText(text)) { stoppedFlag.set(true); enough.countDown() }
+                        if (isDone) { finished.countDown(); enough.countDown() }
+                        null
+                    } else when (m.name) { "hashCode" -> 0; "equals" -> false; "toString" -> "NexusListener"; else -> null }
+                }
+                async.invoke(session, listener)
+                enough.await(40, java.util.concurrent.TimeUnit.SECONDS)
+                if (finished.count > 0) {
+                    // We have what we'll say: ask the model to stop early, and wait for it to finish before closing.
+                    val cancel = session.javaClass.methods.firstOrNull { it.name == "cancelGenerateResponseAsync" && it.parameterTypes.isEmpty() }
+                    runCatching { cancel?.invoke(session) }
+                    finished.await(if (cancel != null) 3 else 40, java.util.concurrent.TimeUnit.SECONDS)
+                }
+                synchronized(sb) { sb.toString() }
+            } finally {
+                runCatching { session.close() }
+                lastLatencyMs = System.currentTimeMillis() - t0
+            }
+        } finally { runLock.unlock() }
+    }
 
     fun installedModel(): BrainModel? {
         val id = prefs.getString("model_id", null) ?: return null
@@ -80,7 +129,7 @@ class PhoneBrainManager(private val context: Context, private val scope: Corouti
                     context,
                     LlmInference.LlmInferenceOptions.builder()
                         .setModelPath(path)
-                        .setMaxTokens(1024)
+                        .setMaxTokens(768)
                         .setPreferredBackend(backend)
                         .build(),
                 )

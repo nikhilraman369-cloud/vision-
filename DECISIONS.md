@@ -23,3 +23,6 @@ Choices made without asking, as the build prompt asked. Each one can be changed 
 | 17 | Removed always-on "Hey Nexus"; listening is tap / volume up + down, with a 6 s follow-up window | User preference; the always-on listener caused flicker and cut-off speech | Settings → Listening |
 | 18 | Volume combo passes the first key through and restores the volume, instead of swallowing volume keys | Swallowing would break camera shutter and in-call volume | Settings → Listening |
 | 19 | Smart brain (Qwen 2.5 1.5B) recommended for answering; Fast (0.5B) is still offered | 0.5B is too weak for real answers; 8 GB RAM handles 1.5B | Settings → Brain |
+| 20 | Streaming answers via MediaPipe's async API looked up by reflection, falling back to one-shot generation | Speech starts after the first sentence; reflection means an API difference can't break the build | — |
+| 21 | Scheduled messages run without a second "Send?" confirmation; behind a PIN lock, a notification asks you to unlock first | You confirmed when you scheduled it; NEXUS can't operate apps behind a secure lock | — |
+| 22 | Trailing "… in 10 minutes" is treated as message text, not a delay, for messages | "Tell Rahul I'll be there in 10 minutes" must send now | Say "after 10 minutes, message …" to delay |

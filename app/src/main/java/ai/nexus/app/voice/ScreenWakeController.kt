@@ -24,6 +24,10 @@ object ScreenWakeController {
         c is Command.Note || c is Command.ReadNotes || c is Command.Calculate || c is Command.ReadNotifications || c is Command.Seek ||
         c is Command.ControlTask || c is Command.Chat || c is Command.Remember || (c is Command.SendMessage && c.contact != null)
 
+    /** True when [text] has to see and operate apps (can't run behind the lock screen). */
+    fun needsScreen(app: NexusApp, text: String): Boolean =
+        runCatching { app.nexus.parser.parse(text).steps.map { it.command } }.getOrDefault(emptyList()).let { st -> st.isEmpty() || !st.all(::headless) || st.any { it is Command.SendMessage } }
+
     fun prepareFor(context: Context, app: NexusApp, text: String, then: () -> Unit) {
         val pm = context.getSystemService(PowerManager::class.java)
         val interactive = pm?.isInteractive ?: true

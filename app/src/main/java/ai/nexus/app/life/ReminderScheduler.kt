@@ -45,6 +45,27 @@ object ReminderScheduler {
         life.store.openTasks().forEach { scheduleTask(ctx, it, life.data.rules.reminderOffsetsMin) }
         scheduleBriefs(ctx)
         scheduleModes(ctx)
+        life.data.scheduled.filter { !it.done && it.atMs > System.currentTimeMillis() - 10 * 60_000 }.forEach { scheduleAction(ctx, it) }
+    }
+
+    private fun actionIntent(ctx: Context, id: String) = PendingIntent.getBroadcast(ctx, ("run$id").hashCode(),
+        Intent(ctx, LifeReceiver::class.java).setAction(LifeReceiver.ACTION_RUN).putExtra("id", id), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+    /** "At 9 pm message Rahul …": an exact alarm that runs it. */
+    fun scheduleAction(ctx: Context, a: ai.nexus.core.life.ScheduledAction) = at(ctx, maxOf(a.atMs, System.currentTimeMillis() + 1000), actionIntent(ctx, a.id))
+
+    fun cancelAction(ctx: Context, id: String) { am(ctx)?.cancel(actionIntent(ctx, id)) }
+
+    /** Phone is locked with a PIN: ask to unlock, then it runs. */
+    fun notifyRunWhenUnlocked(ctx: Context, id: String, text: String) {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "NEXUS reminders", NotificationManager.IMPORTANCE_HIGH))
+        val run = PendingIntent.getActivity(ctx, ("now$id").hashCode(), Intent(ctx, MainActivity::class.java).putExtra("runScheduled", id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        nm.notify(id.hashCode(), android.app.Notification.Builder(ctx, CHANNEL).setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle("Scheduled: ready to do").setContentText("$text — unlock and tap to do it now")
+            .setContentIntent(run).addAction(android.app.Notification.Action.Builder(null, "Do it now", run).build())
+            .setAutoCancel(true).build())
     }
 
     /** Modes with a daily start time switch on by themselves. */
@@ -110,6 +131,7 @@ class LifeReceiver : BroadcastReceiver() {
                 if (NotificationBrain.canSpeakNow(ctx, app, 2)) app.speakProactive(text)
                 ReminderScheduler.scheduleBriefs(ctx) // tomorrow
             }
+            ACTION_RUN -> intent.getStringExtra("id")?.let { app.runScheduledAction(it) }
             ACTION_MODE -> {
                 val name = intent.getStringExtra("mode") ?: return
                 val m = life.data.modes.firstOrNull { it.name == name } ?: return
@@ -144,6 +166,7 @@ class LifeReceiver : BroadcastReceiver() {
         const val ACTION_REMIND = "ai.nexus.REMIND"
         const val ACTION_BRIEF = "ai.nexus.BRIEF"
         const val ACTION_MODE = "ai.nexus.MODE"
+        const val ACTION_RUN = "ai.nexus.RUN"
         const val ACTION_SEND_REPLY = "ai.nexus.SEND_REPLY"
         const val ACTION_DISMISS_REPLY = "ai.nexus.DISMISS_REPLY"
     }

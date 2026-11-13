@@ -139,6 +139,7 @@ class MainActivity : AppCompatActivity() {
 
     /** The bubble's stuck card sends "Type instruction" here. */
     private fun handleAction(i: Intent?) {
+        i?.getStringExtra("runScheduled")?.let { id -> i.removeExtra("runScheduled"); app.runScheduledAction(id, force = true); moveTaskToBack(true); return }
         if (i?.getStringExtra("action") != "instruct") return
         i.removeExtra("action")
         val e = EditText(this).apply { hint = "e.g. tap the three dots, then Settings" }

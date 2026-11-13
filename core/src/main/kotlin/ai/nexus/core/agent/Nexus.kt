@@ -130,6 +130,8 @@ class Nexus(
             return
         }
 
+        // Going somewhere else ends an auto-scroll / repeat.
+        if (loopJob?.isActive == true && parsed.steps.any { it.command is Command.OpenApp || it.command is Command.Navigate }) stopLoop()
         if (job?.isActive == true && !paused.value) {
             // A new instruction while working replaces the current task – unless it corrects it.
             if (parsed.steps.firstOrNull()?.command !is Command.Correction) job?.cancel()
@@ -285,18 +287,21 @@ class Nexus(
     private suspend fun handleControl(c: Control) {
         when (c) {
             Control.STOP, Control.CANCEL -> {
-                val wasRunning = job?.isActive == true
-                job?.cancel(); paused.value = false; ctx.pendingChoice = null
+                val wasRunning = job?.isActive == true || loopJob?.isActive == true
+                job?.cancel(); stopLoop(); paused.value = false; ctx.pendingChoice = null
                 setState(AgentState.IDLE)
                 say(if (wasRunning) "Stopped." else "Okay.")
             }
-            Control.PAUSE -> if (job?.isActive == true) {
+            Control.PAUSE -> if (loopJob?.isActive == true && job?.isActive != true) {
+                loopPaused = true; say("Paused. Say \"continue\" to carry on.", speak = false)
+            } else if (job?.isActive == true) {
                 paused.value = true; setState(AgentState.PAUSED)
                 say("Paused. Say \"continue\" when you're ready.")
             } else {
                 system.mediaKey(MediaKey.PAUSE); say("Paused.", speak = false)
             }
             Control.RESUME -> when {
+                loopPaused && loopJob?.isActive == true -> { loopPaused = false; say("Carrying on.", speak = false) }
                 paused.value -> { paused.value = false; setState(AgentState.EXECUTING); say("Continuing.", speak = false) }
                 interruptedSteps.isNotEmpty() -> {
                     val rest = interruptedSteps; interruptedSteps = emptyList()
@@ -968,6 +973,24 @@ class Nexus(
         Command.HideBubble -> { emit(NexusEvent.HideBubble); Outcome.Success() }
         is Command.Correction -> correction(cmd)
         is Command.ControlTask -> { handleControl(cmd.control); Outcome.Success() }
+        is Command.AutoScroll -> { startLoop(if (cmd.direction == Direction.UP) "Scrolling up" else "Scrolling down") { autoScrollLoop(cmd.direction, cmd.speed) }
+            Outcome.Success("Scrolling ${if (cmd.direction == Direction.UP) "up" else "down"}, $boss. Say faster, slower, or stop.") }
+        is Command.LoopSpeed -> if (loopJob?.isActive == true) {
+            loopSpeed = (loopSpeed + if (cmd.faster) 1 else -1).coerceIn(0, 4)
+            Outcome.Success(if (cmd.faster) "Faster." else "Slower.")
+        } else Outcome.Success("Nothing is running right now, $boss.")
+        is Command.RepeatEvery -> repeatEvery(cmd)
+        is Command.After -> after(cmd)
+        is Command.ScheduleAt -> {
+            val at = ai.nexus.core.nlu.Timing.resolve(cmd.whenText, system.nowMs())
+            when {
+                at == null -> Outcome.Failed("I couldn't work out when \"${cmd.whenText}\" is. Try \"tomorrow at 9 pm\".")
+                !parser.isConcrete(cmd.command) -> Outcome.Failed("I'm not sure how to do \"${cmd.command}\".")
+                else -> schedule(at, cmd.command)
+            }
+        }
+        Command.ListScheduled -> listScheduled()
+        is Command.CancelScheduled -> cancelScheduled(cmd.what)
         Command.Repeat -> Outcome.Success()
         is Command.Shortcut -> Outcome.Success()
         is Command.GoTo -> goTo(cmd)
@@ -1074,7 +1097,7 @@ class Nexus(
     private suspend fun sendMessage(cmd: Command.SendMessage): Outcome {
         val app = targetMessagingApp(cmd.app, cmd.contact)
         val text = cmd.text ?: return Outcome.Asked("What should I say${cmd.contact?.let { " to $it" } ?: ""}?")
-        if (cmd.send && memory.settings.confirmBeforeSending && pendingConfirmed != cmd) {
+        if (cmd.send && memory.settings.confirmBeforeSending && pendingConfirmed != cmd && !autoConfirm) {
             val who = cmd.contact ?: "them"
             ask("Send \"$text\" to $who?", listOf("yes", "no")) { idx ->
                 if (idx == 0) { pendingConfirmed = cmd; report(sendMessage(cmd), "send") } else say("Okay, not sending it.")
@@ -1357,6 +1380,146 @@ class Nexus(
         return runCommand(replacement)
     }
 
+    // ================================================================ loops, delays & schedules
+
+    private var loopJob: Job? = null
+    @Volatile private var loopSpeed = 2
+    @Volatile private var loopPaused = false
+    private val _loop = MutableStateFlow<String?>(null)
+    /** What is auto-running right now ("Scrolling down", "Every 15 s: next"), for the UI. */
+    val loop: StateFlow<String?> = _loop
+    /** Set by the app: arm an alarm for a scheduled action / remove it. */
+    @Volatile var onSchedule: ((ai.nexus.core.life.ScheduledAction) -> Unit)? = null
+    @Volatile var onUnschedule: ((String) -> Unit)? = null
+    /** Scheduled actions run without the usual "Send …?" question (you already asked for them). */
+    @Volatile private var autoConfirm = false
+    private data class Delayed(val text: String, val atMs: Long, val job: Job)
+    private val delayed = java.util.concurrent.CopyOnWriteArrayList<Delayed>()
+
+    fun stopLoop() { loopJob?.cancel(); loopJob = null; loopPaused = false; _loop.value = null }
+
+    private fun startLoop(label: String, block: suspend () -> Unit) {
+        loopJob?.cancel()
+        loopPaused = false
+        _loop.value = label
+        lateinit var me: Job
+        me = scope.launch {
+            try { block() } finally { if (loopJob === me) { _loop.value = null; loopJob = null } }
+        }
+        loopJob = me
+    }
+
+    private suspend fun waitWhilePaused() { while (loopPaused) kotlinx.coroutines.delay(200) }
+
+    private fun fmtSeconds(s: Int) = when {
+        s % 3600 == 0 -> "${s / 3600} hour" + if (s / 3600 == 1) "" else "s"
+        s % 60 == 0 -> "${s / 60} minute" + if (s / 60 == 1) "" else "s"
+        else -> "$s seconds"
+    }
+
+    /** Keep scrolling (reading speed when "slowly") until "stop", the end of the page, or an hour. */
+    private suspend fun autoScrollLoop(dir: Direction, speed: Int) {
+        loopSpeed = speed.coerceIn(0, 4)
+        val kind = ops.screen()?.let { ScreenClassifier.classify(it) }
+        val shortVideos = kind == ScreenKind.IG_REELS || kind == ScreenKind.YT_SHORTS
+        val end = system.nowMs() + 60 * 60_000L
+        var lastSig: Int? = null
+        var same = 0
+        kotlinx.coroutines.delay(500)
+        while (system.nowMs() < end) {
+            waitWhilePaused()
+            val sp = loopSpeed.coerceIn(0, 4)
+            if (shortVideos) {
+                runCommand(if (dir == Direction.DOWN) Command.NextItem else Command.PreviousItem)
+                kotlinx.coroutines.delay(longArrayOf(20_000, 15_000, 10_000, 6_000, 4_000)[sp])
+                continue
+            }
+            // A swipe up moves the content down (and vice versa); slow = short, gentle swipes for reading.
+            device.swipe(if (dir == Direction.DOWN) Direction.UP else Direction.DOWN, floatArrayOf(0.12f, 0.2f, 0.35f, 0.5f, 0.65f)[sp], longArrayOf(900, 700, 450, 350, 300)[sp])
+            kotlinx.coroutines.delay(longArrayOf(3_000, 1_800, 1_100, 700, 450)[sp])
+            val sig = ops.screen()?.let { s -> s.nodes.joinToString("|") { it.label }.hashCode() }
+            if (sig != null && sig == lastSig) {
+                if (++same >= 3) { say("That's the ${if (dir == Direction.DOWN) "end" else "top"}, $boss."); return }
+            } else same = 0
+            lastSig = sig
+        }
+    }
+
+    private fun repeatEvery(cmd: Command.RepeatEvery): Outcome {
+        val steps = parser.parse(cmd.command).steps.filter { it.command !is Command.Chat && it.command !is Command.Agentic }
+        if (steps.isEmpty()) return Outcome.Failed("I don't know how to do \"${cmd.command}\" yet.")
+        val what = if (steps.size == 1 && steps[0].command == Command.NextItem) "next one" else cmd.command
+        startLoop("Every ${fmtSeconds(cmd.seconds)}: $what") {
+            loopSpeed = 2
+            val end = system.nowMs() + 3 * 3600_000L
+            var n = 0
+            while (system.nowMs() < end && n < 2000) {
+                val factor = doubleArrayOf(2.0, 1.5, 1.0, 0.66, 0.5)[loopSpeed.coerceIn(0, 4)]
+                kotlinx.coroutines.delay((cmd.seconds * 1000 * factor).toLong())
+                waitWhilePaused()
+                for (st in steps) runCommand(st.command, st.source)
+                n++
+            }
+        }
+        return Outcome.Success("Okay $boss: $what every ${fmtSeconds(cmd.seconds)}. Say stop to end.")
+    }
+
+    private fun after(cmd: Command.After): Outcome {
+        // Long waits survive the app being closed (alarm); short ones just wait here.
+        if (cmd.seconds >= 600 && life != null) return schedule(system.nowMs() + cmd.seconds * 1000L, cmd.command)
+        val at = system.nowMs() + cmd.seconds * 1000L
+        lateinit var d: Delayed
+        val j = scope.launch {
+            kotlinx.coroutines.delay(cmd.seconds * 1000L)
+            delayed.remove(d)
+            autoConfirm = true
+            try { process(cmd.command) } finally { autoConfirm = false }
+        }
+        d = Delayed(cmd.command, at, j); delayed += d
+        return Outcome.Success("Okay $boss, in ${fmtSeconds(cmd.seconds)}: ${cmd.command}.")
+    }
+
+    private fun schedule(at: Long, text: String): Outcome {
+        val l = life ?: return Outcome.Failed("Scheduling isn't available.")
+        val a = ai.nexus.core.life.ScheduledAction(text = text, atMs = at)
+        l.store.mutate { d -> d.copy(scheduled = (d.scheduled.filter { !it.done && it.atMs > system.nowMs() - 86_400_000L } + a)) }
+        onSchedule?.invoke(a)
+        return Outcome.Success("Scheduled ${ai.nexus.core.life.Briefs.whenText(at, system.nowMs())}, $boss: $text.")
+    }
+
+    private fun listScheduled(): Outcome {
+        val now = system.nowMs()
+        val items = (life?.data?.scheduled.orEmpty().filter { !it.done && it.atMs > now }.map { it.atMs to it.text } +
+            delayed.map { it.atMs to it.text }).sortedBy { it.first }
+        if (items.isEmpty()) return Outcome.Success("Nothing scheduled, $boss.")
+        return Outcome.Success(items.take(5).joinToString(" ") { (at, t) -> "${ai.nexus.core.life.Briefs.whenText(at, now)}: $t." })
+    }
+
+    private fun cancelScheduled(what: String?): Outcome {
+        val key = what?.let { Fuzzy.normalize(it) }
+        fun hit(t: String) = key == null || Fuzzy.normalize(t).contains(key)
+        var n = 0
+        delayed.filter { hit(it.text) }.forEach { it.job.cancel(); delayed.remove(it); n++ }
+        life?.let { l ->
+            val gone = l.data.scheduled.filter { !it.done && hit(it.text) }
+            gone.forEach { onUnschedule?.invoke(it.id) }
+            n += gone.size
+            l.store.mutate { d -> d.copy(scheduled = d.scheduled.filterNot { g -> gone.any { it.id == g.id } }) }
+        }
+        return Outcome.Success(if (n == 0) "I couldn't find that in your schedule, $boss." else "Cancelled $n scheduled ${if (n == 1) "item" else "items"}.")
+    }
+
+    /** Called by the app's alarm when a scheduled action is due. */
+    fun runScheduled(id: String): Job? {
+        val l = life ?: return null
+        val a = l.data.scheduled.firstOrNull { it.id == id && !it.done } ?: return null
+        l.store.mutate { d -> d.copy(scheduled = d.scheduled.map { if (it.id == id) it.copy(done = true) else it }) }
+        return scope.launch {
+            autoConfirm = true
+            try { process(a.text) } finally { autoConfirm = false }
+        }
+    }
+
     // ================================================================ LLM
 
     private fun contextText(): String = buildString {
@@ -1383,8 +1546,24 @@ class Nexus(
                 val history = ctx.conversation.toList().dropLast(1).map { it.role to it.text }
                 val now = SimpleDateFormat("EEEE d MMMM, h:mm a", Locale.ENGLISH).format(Date(system.nowMs()))
                 val facts = memory.relevant(text, 700).joinToString("\n") { (it.key?.let { k -> "$k: " } ?: "") + it.value }
-                val work = scope.async { runCatching { pb.answer(text, facts, history, boss, now) }.getOrNull() }
-                kotlinx.coroutines.withTimeoutOrNull(ANSWER_TIMEOUT_MS) { work.await() }
+                // Stream: speak each sentence the moment the model finishes it.
+                val parts = kotlinx.coroutines.channels.Channel<String>(16)
+                val work = scope.async {
+                    try { runCatching { pb.answer(text, facts, history, boss, now) { parts.trySend(it) } }.getOrNull() } finally { parts.close() }
+                }
+                val spoken = ArrayList<String>()
+                kotlinx.coroutines.withTimeoutOrNull(ANSWER_TIMEOUT_MS) {
+                    for (sentence in parts) {
+                        emit(NexusEvent.Reply(sentence, memory.settings.speakResponses, continued = spoken.isNotEmpty()))
+                        spoken += sentence
+                    }
+                }
+                if (spoken.isNotEmpty()) {
+                    val full = spoken.joinToString(" ")
+                    ctx.addTurn("assistant", full); memory.recordTurn("assistant", full)
+                    return
+                }
+                (if (work.isCompleted) work.await() else null)
                     ?: "Sorry $boss, I'm still thinking about the last thing. Ask me again in a moment."
             }
         }
