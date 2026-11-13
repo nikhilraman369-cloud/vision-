@@ -75,11 +75,39 @@ class VoicePackManager(private val context: Context, private val scope: Coroutin
 
     companion object {
         private const val BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+        private fun piper(name: String, title: String, size: String = "≈64 MB", speaker: Int = 0, id: String = "piper-$name") =
+            Pack(id, title, size, "$BASE/vits-piper-$name.tar.bz2", "vits", speaker = speaker, folder = "piper-$name")
+        private fun kokoro(name: String, title: String, speaker: Int) =
+            Pack("kokoro-en-v0_19-$name", title, "≈330 MB (one download, 11 voices)", "$BASE/kokoro-en-v0_19.tar.bz2", "kokoro", speaker = speaker, folder = "kokoro-en-v0_19")
+
         val PACKS = listOf(
-            Pack("piper-en_GB-alan-medium", "Alan — British male, light & fast", "≈64 MB", "$BASE/vits-piper-en_GB-alan-medium.tar.bz2", "vits"),
-            Pack("piper-en_GB-northern_english_male-medium", "Northern English male, deeper", "≈64 MB", "$BASE/vits-piper-en_GB-northern_english_male-medium.tar.bz2", "vits"),
-            Pack("kokoro-en-v0_19-george", "George — British male, top quality (Kokoro)", "≈330 MB", "$BASE/kokoro-en-v0_19.tar.bz2", "kokoro", speaker = 9, folder = "kokoro-en-v0_19"),
-            Pack("kokoro-en-v0_19-lewis", "Lewis — British male, top quality (Kokoro)", "≈330 MB", "$BASE/kokoro-en-v0_19.tar.bz2", "kokoro", speaker = 10, folder = "kokoro-en-v0_19"),
+            // Studio-quality pack: one download gives all of these voices.
+            kokoro("george", "George — British male, deep butler (best)", 9),
+            kokoro("lewis", "Lewis — British male, smooth", 10),
+            kokoro("emma", "Emma — British female", 7),
+            kokoro("isabella", "Isabella — British female, warm", 8),
+            kokoro("adam", "Adam — American male, deep", 5),
+            kokoro("michael", "Michael — American male, calm", 6),
+            kokoro("bella", "Bella — American female, bright", 1),
+            kokoro("sarah", "Sarah — American female", 3),
+            kokoro("nicole", "Nicole — American female, soft", 2),
+            kokoro("sky", "Sky — American female, young", 4),
+            // Light, fast packs (one voice each, except Semaine).
+            piper("en_GB-alan-medium", "Alan — British male, light & fast"),
+            piper("en_GB-northern_english_male-medium", "Northern English male, deeper"),
+            piper("en_GB-semaine-medium", "Spike — British male (Semaine)", speaker = 1, id = "piper-en_GB-semaine-spike"),
+            piper("en_GB-semaine-medium", "Obadiah — British male, low (Semaine)", speaker = 2, id = "piper-en_GB-semaine-obadiah"),
+            piper("en_GB-semaine-medium", "Prudence — British female (Semaine)", speaker = 0, id = "piper-en_GB-semaine-prudence"),
+            piper("en_GB-semaine-medium", "Poppy — British female, cheerful (Semaine)", speaker = 3, id = "piper-en_GB-semaine-poppy"),
+            piper("en_GB-alba-medium", "Alba — Scottish female"),
+            piper("en_GB-jenny_dioco-medium", "Jenny — British female"),
+            piper("en_US-ryan-high", "Ryan — American male, clear", "≈110 MB"),
+            piper("en_US-joe-medium", "Joe — American male"),
+            piper("en_US-lessac-medium", "Lessac — American female, newsreader"),
+            piper("en_US-amy-medium", "Amy — American female"),
         )
+
+        /** Voices grouped by the download that contains them. */
+        fun groups(): Map<String, List<Pack>> = PACKS.groupBy { it.folder }
     }
 }

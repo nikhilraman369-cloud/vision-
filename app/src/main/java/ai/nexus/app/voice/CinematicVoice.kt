@@ -49,6 +49,12 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
     /** Load (or switch to) a downloaded voice pack in the background. */
     fun load(id: String, onLoaded: (Boolean) -> Unit = {}) {
         if (loadedId == id && tts != null) { onLoaded(true); return }
+        // Another voice from the same download (e.g. Kokoro George → Emma): just switch speaker.
+        val p0 = packs.pack(id)
+        val cur = loadedId?.let { packs.pack(it) }
+        if (p0 != null && cur != null && tts != null && p0.folder == cur.folder) {
+            speaker = p0.speaker; loadedId = id; synchronized(cache) { cache.clear() }; onLoaded(true); return
+        }
         loader.execute {
             val ok = runCatching {
                 val p = packs.pack(id) ?: error("Unknown voice pack")
@@ -106,6 +112,7 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
         }
         player.execute {
             var started = false
+            var framesWritten = 0L
             var reverb: PresetReverb? = null; var bass: BassBoost? = null
             try {
                 requestFocus()
@@ -114,7 +121,7 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
                     if (rate < 0) break
                     if (samples.isEmpty()) continue
                     val t = track?.takeIf { it.sampleRate == rate } ?: newTrack(rate, pitch).also { nt ->
-                        track?.release(); track = nt
+                        track?.release(); track = nt; framesWritten = 0
                         if (effects) {
                             reverb = runCatching { PresetReverb(0, nt.audioSessionId).apply { preset = PresetReverb.PRESET_SMALLROOM; enabled = true } }.getOrNull()
                             bass = runCatching { BassBoost(0, nt.audioSessionId).apply { if (strengthSupported) setStrength(220); enabled = true } }.getOrNull()
@@ -126,11 +133,20 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
                     while (off < samples.size && generation.get() == gen) {
                         val n = t.write(samples, off, minOf(4096, samples.size - off), AudioTrack.WRITE_BLOCKING)
                         if (n <= 0) break
-                        off += n
+                        off += n; framesWritten += n
                     }
                 }
-                // Let the tail of the last sentence finish.
-                track?.let { t -> if (generation.get() == gen) { Thread.sleep(250); t.stop() } }
+                // Let the tail of the last sentence finish playing before releasing the track
+                // (releasing early was cutting off the last words).
+                track?.let { t ->
+                    if (generation.get() == gen) {
+                        val deadline = System.currentTimeMillis() + 4000
+                        while (generation.get() == gen && System.currentTimeMillis() < deadline &&
+                            (t.playbackHeadPosition.toLong() and 0xFFFFFFFFL) < framesWritten) Thread.sleep(30)
+                        Thread.sleep(120)
+                        t.stop()
+                    }
+                }
             } catch (_: Exception) {
             } finally {
                 runCatching { reverb?.release(); bass?.release() }

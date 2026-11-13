@@ -18,9 +18,13 @@ import java.util.Locale
 enum class VoiceState { OFF, LISTENING, HEARING, SPEAKING }
 
 /**
- * Speech in and out. Never listens while speaking (so NEXUS can't hear and
- * obey itself), resumes listening automatically after replies in continuous
- * mode, and supports an optional wake word.
+ * Speech in and out.
+ *
+ * Listening works in short windows: tap the bubble (or press volume up + down
+ * together) and NEXUS listens for a few seconds. After it answers, it listens
+ * again for a follow-up for [followUpMs]; if you say nothing, it goes back to
+ * sleep. It never listens while it is speaking, so it can't hear itself, and
+ * the visible state stays steady while the recogniser restarts in between.
  */
 class VoiceEngine(
     private val context: Context,
@@ -40,49 +44,82 @@ class VoiceEngine(
     private val _partial = MutableStateFlow("")
     val partial: StateFlow<String> = _partial
 
-    /** Keep listening after each utterance and reply. */
+    /** Kept for settings compatibility; listening is always window-based now. */
     @Volatile var continuous = false
-
-    // Conversation mode: after each reply, keep listening for a follow-up (no wake word) for a few seconds.
-    @Volatile var followUpMs = 8000L
-    @Volatile private var conversationUntil = 0L
-    fun inConversation() = System.currentTimeMillis() < conversationUntil
-    fun startConversation() = main.post { conversationUntil = System.currentTimeMillis() + followUpMs; startListening() }
-    fun endConversation() = main.post { conversationUntil = 0; if (!continuous) stopListening() }
     @Volatile var wakeWordEnabled = false
     @Volatile var wakeWord = "hey nexus"
+
+    /** How long NEXUS keeps listening for a follow-up after it answers. */
+    @Volatile var followUpMs = 6000L
+    /** How long the first listening window lasts after you activate NEXUS. */
+    @Volatile var firstWindowMs = 7000L
     @Volatile var language = "auto"
     @Volatile var speechRate = 1.0f
-    /** After the wake word is heard, follow-ups don't need it for a short while. */
-    @Volatile private var awakeUntil = 0L
-    @Volatile private var wantListening = false
     @Volatile private var preferOffline = true
+
+    // Listening session
+    @Volatile private var conversation = false     // activated; follow-ups allowed
+    @Volatile private var windowUntil = 0L         // recogniser may run until then
+    @Volatile private var awaitingReply = false    // an utterance is being handled
+    @Volatile private var systemSpeaking = false
+
+    fun inConversation() = conversation
+    fun startConversation() = startListening()
+    fun endConversation() = main.post { closeSession() }
+    /** Compatibility no-op (the follow-up window is opened after each reply). */
+    fun extendConversation() {}
 
     fun init() {
         tts = TextToSpeech(context) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) { main.post { _state.value = VoiceState.SPEAKING; stopRecognizer() } }
-                override fun onDone(id: String?) { main.post { afterSpeaking() } }
-                @Deprecated("Deprecated in Java") override fun onError(id: String?) { main.post { afterSpeaking() } }
+                override fun onStart(id: String?) { main.post { _state.value = VoiceState.SPEAKING; pauseRecognizer() } }
+                override fun onDone(id: String?) { main.post { if (tts?.isSpeaking != true) systemSpeaking = false; afterSpeaking() } }
+                @Deprecated("Deprecated in Java") override fun onError(id: String?) { main.post { systemSpeaking = false; afterSpeaking() } }
             })
         }
     }
 
     val available: Boolean get() = SpeechRecognizer.isRecognitionAvailable(context)
 
+    /** Activate: interrupt any speech and listen for a command. */
     fun startListening() = main.post {
-        wantListening = true
-        if (isSpeaking) { neuralQueue.clear(); cinematic?.stop(); tts?.stop() } // tapping the mic interrupts NEXUS (barge-in)
+        if (isSpeaking) { neuralQueue.clear(); cinematic?.stop(); tts?.stop(); systemSpeaking = false; neuralBusy = false }
+        conversation = true
+        openWindow(firstWindowMs)
+    }
+
+    fun stopListening() = main.post { closeSession() }
+
+    val listening: Boolean get() = _state.value == VoiceState.LISTENING || _state.value == VoiceState.HEARING
+
+    fun toggle() { if (listening) stopListening() else startListening() }
+
+    /** Stop talking immediately (voice interruption from the bubble or "stop"). */
+    fun shutUp() = main.post { neuralQueue.clear(); cinematic?.stop(); tts?.stop(); systemSpeaking = false; neuralBusy = false; afterSpeaking() }
+
+    private fun openWindow(ms: Long) {
+        awaitingReply = false
+        windowUntil = System.currentTimeMillis() + ms
+        _partial.value = ""
+        _state.value = VoiceState.LISTENING
         startRecognizer()
     }
 
-    fun stopListening() = main.post { wantListening = false; stopRecognizer(); _state.value = VoiceState.OFF }
+    private fun closeSession() {
+        conversation = false; awaitingReply = false; windowUntil = 0
+        pauseRecognizer()
+        if (_state.value != VoiceState.SPEAKING) _state.value = VoiceState.OFF
+        _partial.value = ""
+    }
 
-    fun toggle() { if (_state.value == VoiceState.LISTENING || _state.value == VoiceState.HEARING) stopListening() else startListening() }
+    /** The command (and any reply) is finished: listen for a follow-up, or sleep. */
+    fun commandFinished() = main.post { replyFinished() }
 
-    /** Stop talking immediately (voice interruption from the bubble or "stop"). */
-    fun shutUp() = main.post { neuralQueue.clear(); cinematic?.stop(); tts?.stop(); afterSpeaking() }
+    private fun replyFinished() {
+        if (!conversation || !awaitingReply || isSpeaking) return
+        main.postDelayed({ if (conversation && awaitingReply && !isSpeaking) openWindow(followUpMs) }, 300)
+    }
 
     // ---------------- voice output: neural pack first, then the system British voice
     @Volatile var cinematic: CinematicVoice? = null
@@ -102,7 +139,9 @@ class VoiceEngine(
 
     fun speak(text: String) = main.post {
         if (muted || text.isBlank()) { afterSpeaking(); return@post }
-        stopRecognizer()
+        // Speaking during a listening window: stop listening; we listen again after the reply.
+        if (conversation) { awaitingReply = true; windowUntil = 0 }
+        pauseRecognizer()
         val c = cinematic
         if (useNeural && c != null && c.ready && !Devanagari.containsDevanagari(text)) {
             neuralQueue.addLast(text)
@@ -118,6 +157,8 @@ class VoiceEngine(
         }
         t.setSpeechRate(speechRate)
         t.setPitch(pitch)
+        systemSpeaking = true
+        _state.value = VoiceState.SPEAKING
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "nexus-${System.nanoTime()}")
     }
 
@@ -125,19 +166,19 @@ class VoiceEngine(
         val c = cinematic ?: return
         val next = neuralQueue.removeFirstOrNull() ?: run { neuralBusy = false; afterSpeaking(); return }
         neuralBusy = true
+        _state.value = VoiceState.SPEAKING
         val ok = c.speak(next, speechRate, pitch, effects,
-            onStart = { main.post { _state.value = VoiceState.SPEAKING; stopRecognizer() } },
+            onStart = { main.post { _state.value = VoiceState.SPEAKING; pauseRecognizer() } },
             onDone = { main.post { playNextNeural() } })
         if (!ok) { neuralBusy = false; neuralQueue.clear(); useNeural = false; speak(next) }
     }
 
-    val isSpeaking: Boolean get() = neuralBusy || tts?.isSpeaking == true
+    val isSpeaking: Boolean get() = neuralBusy || systemSpeaking || tts?.isSpeaking == true
 
     private fun afterSpeaking() {
-        if (tts?.isSpeaking == true || neuralBusy) return
-        _state.value = VoiceState.OFF
-        if (inConversation()) conversationUntil = System.currentTimeMillis() + followUpMs
-        if (continuous || inConversation()) main.postDelayed({ if (!isSpeaking && (continuous || inConversation())) startRecognizer() }, 350)
+        if (isSpeaking) return
+        if (_state.value == VoiceState.SPEAKING) _state.value = VoiceState.OFF
+        replyFinished()
     }
 
     private fun recognizerIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -148,31 +189,37 @@ class VoiceEngine(
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, tag)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-        // Finish quickly after you stop talking.
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 450L)
-        // On-device recognition is faster; falls back to online if the language pack is missing.
+        // Give you time to finish your sentence (short pauses no longer cut you off).
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1100L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 900L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
         if (preferOffline && !accurate) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
     }
 
     private fun startRecognizer() {
-        if (!available) return
-        if (tts?.isSpeaking == true) return
+        if (!available || isSpeaking) return
         if (recognizer == null) {
             recognizer = SpeechRecognizer.createSpeechRecognizer(context).also { it.setRecognitionListener(listener) }
         }
         runCatching { recognizer?.startListening(recognizerIntent()) }
-        _state.value = VoiceState.LISTENING
+            .onFailure { main.postDelayed({ if (windowOpen()) startRecognizer() }, 400) }
     }
 
-    private fun stopRecognizer() {
-        runCatching { recognizer?.cancel() }
+    /** Stops the recogniser without changing what the bubble shows. */
+    private fun pauseRecognizer() { runCatching { recognizer?.cancel() } }
+
+    private fun windowOpen() = conversation && !awaitingReply && System.currentTimeMillis() < windowUntil
+
+    /** Window over with nothing heard: go to sleep. */
+    private fun windowExpired() {
+        conversation = false; windowUntil = 0
         if (_state.value == VoiceState.LISTENING || _state.value == VoiceState.HEARING) _state.value = VoiceState.OFF
+        _partial.value = ""
     }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) { _state.value = VoiceState.LISTENING }
-        override fun onBeginningOfSpeech() { _state.value = VoiceState.HEARING }
+        override fun onReadyForSpeech(params: Bundle?) { if (windowOpen()) _state.value = VoiceState.LISTENING }
+        override fun onBeginningOfSpeech() { if (windowOpen()) { _state.value = VoiceState.HEARING; windowUntil = maxOf(windowUntil, System.currentTimeMillis() + 15_000) } }
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
@@ -182,51 +229,38 @@ class VoiceEngine(
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
-            _state.value = VoiceState.OFF
-            // Offline speech pack not installed: switch to online recognition and retry once.
+            if (!windowOpen()) { if (!awaitingReply && !isSpeaking && windowUntil != 0L) windowExpired(); return }
+            // Offline speech pack not installed: switch to online recognition and retry.
             if (preferOffline && (error == SpeechRecognizer.ERROR_SERVER || error == SpeechRecognizer.ERROR_NETWORK ||
                     error == 12 /* ERROR_LANGUAGE_NOT_SUPPORTED */ || error == 13 /* ERROR_LANGUAGE_UNAVAILABLE */)) {
                 preferOffline = false
-                main.postDelayed({ startRecognizer() }, 100)
+                main.postDelayed({ if (windowOpen()) startRecognizer() }, 100)
                 return
             }
-            val retry = (continuous || inConversation()) && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT)
-            if (retry) main.postDelayed({ startRecognizer() }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600 else 250)
+            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) { windowExpired(); return }
+            // Nothing heard yet: quietly keep listening until the window closes (no flicker).
+            val left = windowUntil - System.currentTimeMillis()
+            if (left > 1200) {
+                if (_state.value == VoiceState.HEARING) _state.value = VoiceState.LISTENING
+                main.postDelayed({ if (windowOpen()) startRecognizer() }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 500 else 150)
+            } else windowExpired()
         }
 
         override fun onResults(results: Bundle?) {
-            _state.value = VoiceState.OFF
-            _partial.value = ""
             val all = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
             val text = if (all.isEmpty()) "" else runCatching { chooseBest(all) }.getOrDefault(all.first())
-            if (text.isNotEmpty() && accept(text)) {
-                if (inConversation()) conversationUntil = System.currentTimeMillis() + 60_000 // hold the conversation while the command runs
+            _partial.value = ""
+            if (text.isNotEmpty()) {
+                awaitingReply = true; windowUntil = 0
+                _state.value = VoiceState.OFF
                 onUtterance(text)
-            }
-            else if (continuous || inConversation()) main.postDelayed({ startRecognizer() }, 200)
+            } else if (windowOpen() && windowUntil - System.currentTimeMillis() > 1200) main.postDelayed({ if (windowOpen()) startRecognizer() }, 150)
+            else windowExpired()
         }
     }
 
-    /** With a wake word, only act on speech that starts with it (or shortly after it). */
-    private fun accept(text: String): Boolean {
-        if (!wakeWordEnabled || !continuous) return true
-        val t = text.lowercase()
-        val now = System.currentTimeMillis()
-        val ww = wakeWord.lowercase()
-        val heard = t.startsWith(ww) || t.startsWith(ww.removePrefix("hey ")) || t.startsWith("hey next") || t.startsWith("hey lexus")
-        if (heard) { awakeUntil = now + 20_000; return t.length > ww.length + 2 || run { speak("Yes?"); false } }
-        return now < awakeUntil
-    }
-
-    /** Keep the follow-up window open while a conversation is going. */
-    fun extendConversation() { if (awakeUntil > System.currentTimeMillis()) awakeUntil = System.currentTimeMillis() + 20_000 }
-
-    /** A short tick + vibration for quick confirmations (faster than speaking). */
-    /** After a quick confirmation: in continuous mode, listen again. (Vibration is done by HapticEngine.) */
-    fun tick() = main.post {
-        if (inConversation()) conversationUntil = System.currentTimeMillis() + followUpMs
-        if (continuous || inConversation()) main.postDelayed({ if (!isSpeaking && _state.value == VoiceState.OFF) startRecognizer() }, 250)
-    }
+    /** A quick confirmation finished (tick + vibration): listen for a follow-up. */
+    fun tick() = main.post { replyFinished() }
 
     fun release() {
         main.post {

@@ -152,8 +152,15 @@ class OverlayService : Service() {
         }
         val lp = overlayParams(size, size).apply { x = dockX(s.bubbleSide); y = (s.bubbleY * screenH).toInt().coerceIn((60 * dp).toInt(), screenH - (160 * dp).toInt()) }
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { if (card == null) { cardMode = "main"; showCard() } else hideCard(); return true }
-            override fun onDoubleTap(e: MotionEvent): Boolean { app.startConversation(); return true }
+            // Tap = talk (listens, answers, then listens 6 s more for a follow-up). Tap again = stop.
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                val wasListening = app.voice.listening
+                app.talk()
+                if (!wasListening && card == null) { cardMode = "main"; showCard() } else if (wasListening) hideCard()
+                return true
+            }
+            // Double-tap = open the card (tasks, mode, last reply) without listening.
+            override fun onDoubleTap(e: MotionEvent): Boolean { if (card == null) { cardMode = "main"; showCard() } else hideCard(); return true }
             override fun onLongPress(e: MotionEvent) { cardMode = "menu"; showCard() }
         })
         var startX = 0; var startY = 0; var touchX = 0f; var touchY = 0f; var dragging = false
@@ -281,7 +288,7 @@ class OverlayService : Service() {
     private fun touch() {
         collapseJob?.cancel()
         if (cardMode == "stuck") return
-        collapseJob = scope.launch { delay(7000); hideCard() }
+        collapseJob = scope.launch { delay(7000); while (app.voice.inConversation() || app.voice.isSpeaking) delay(1000); hideCard() }
     }
 
     private fun hideCard() {

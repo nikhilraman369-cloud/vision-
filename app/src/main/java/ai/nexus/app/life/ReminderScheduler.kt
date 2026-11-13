@@ -135,7 +135,7 @@ class LifeReceiver : BroadcastReceiver() {
                 nm.createNotificationChannel(NotificationChannel(ReminderScheduler.CHANNEL, "NEXUS reminders", NotificationManager.IMPORTANCE_HIGH))
                 val open = PendingIntent.getActivity(ctx, 77, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
                 nm.notify(77, android.app.Notification.Builder(ctx, ReminderScheduler.CHANNEL).setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                    .setContentTitle("NEXUS is ready").setContentText("Tap to start the bubble and \"Hey Nexus\".").setContentIntent(open).setAutoCancel(true).build())
+                    .setContentTitle("NEXUS is ready").setContentText("Tap to bring back the bubble.").setContentIntent(open).setAutoCancel(true).build())
             }
         }
     }

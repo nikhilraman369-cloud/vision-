@@ -20,3 +20,6 @@ Choices made without asking, as the build prompt asked. Each one can be changed 
 | 14 | Location triggers are skipped in v2 | Needs background location; low value against its privacy cost | — |
 | 15 | The user is addressed as "Boss" | Spec | Panel → General |
 | 16 | Raw notification text is kept 7 days, then wiped; the diagnostics log keeps the last 600 entries | Spec / storage | — |
+| 17 | Removed always-on "Hey Nexus"; listening is tap / volume up + down, with a 6 s follow-up window | User preference; the always-on listener caused flicker and cut-off speech | Settings → Listening |
+| 18 | Volume combo passes the first key through and restores the volume, instead of swallowing volume keys | Swallowing would break camera shutter and in-call volume | Settings → Listening |
+| 19 | Smart brain (Qwen 2.5 1.5B) recommended for answering; Fast (0.5B) is still offered | 0.5B is too weak for real answers; 8 GB RAM handles 1.5B | Settings → Brain |

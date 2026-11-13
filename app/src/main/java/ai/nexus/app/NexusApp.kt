@@ -68,6 +68,7 @@ class NexusApp : Application() {
         nexus = Nexus(device, systemActions, memory, brain = buildBrain(), scope = scope, life = life)
         voice = VoiceEngine(this, chooseBest = ::bestGuess) { text -> ask(text) }
         voice.init()
+        migrateTo21()
         applySettings()
 
         // Free on-device brain: load it in the background if it has been downloaded.
@@ -78,6 +79,14 @@ class NexusApp : Application() {
             }
         }
         brainManager.warmUp()
+        nexus.phoneBrainMissing = {
+            val boss = memory.settings.addressAs
+            when (val st = brainManager.state.value) {
+                is PhoneBrainManager.State.Downloading -> "My brain is still downloading, $boss. ${st.percent}% done. Ask me again when it finishes."
+                PhoneBrainManager.State.Loading -> "Give me a few seconds, $boss. I'm still waking my brain up."
+                else -> null
+            }
+        }
         haptics = ai.nexus.app.voice.HapticEngine(this)
         voskModels = ai.nexus.app.voice.VoskModelManager(this, scope)
         voskModels.refresh(memory.settings.speechModel)
@@ -97,7 +106,6 @@ class NexusApp : Application() {
                     is NexusEvent.Reply -> {
                         add(ChatLine(false, e.text))
                         if (e.speak) voice.speak(e.text)
-                        voice.extendConversation()
                     }
                     is NexusEvent.StepStarted -> _status.value = if (e.total > 1) "Step ${e.index}/${e.total}: ${e.description}" else e.description
                     is NexusEvent.StepFinished -> if (e.outcome !is Outcome.Success) {
@@ -106,14 +114,14 @@ class NexusApp : Application() {
                         // Keep what the screen looked like when something went wrong, for "Copy screen info".
                         runCatching { device.snapshot() }.getOrNull()?.takeIf { it.packageName != packageName }?.let { lastAppScreen = it.toPromptText(150) }
                     }
-                    is NexusEvent.StateChanged -> _status.value = when (e.state) {
+                    is NexusEvent.StateChanged -> _status.value = when (e.state.also { if (it == AgentState.IDLE) scope.launch { kotlinx.coroutines.delay(700); if (nexus.state.value == AgentState.IDLE) voice.commandFinished() } }) {
                         AgentState.IDLE -> "Ready"
                         AgentState.THINKING -> "Thinking…"
                         AgentState.EXECUTING -> "Working…"
                         AgentState.PAUSED -> "Paused"
                         AgentState.WAITING_FOR_USER -> "Waiting for you"
                     }
-                    is NexusEvent.Error -> add(ChatLine(false, "⚠ ${e.message}", detail = true))
+                    is NexusEvent.Error -> { add(ChatLine(false, "⚠ ${e.message}", detail = true)); voice.commandFinished() }
                     is NexusEvent.Ack -> { add(ChatLine(false, e.text.ifBlank { "✓ Done" })); haptics.success(); if (memory.settings.earcons) sounds.success(); voice.tick() }
                     NexusEvent.HideBubble -> OverlayService.stop(this@NexusApp)
                     is NexusEvent.TeachingChanged -> { _teaching.value = e.active; if (!e.active) _stuck.value = null }
@@ -139,11 +147,22 @@ class NexusApp : Application() {
         return options.firstOrNull(::understood) ?: options.first()
     }
 
-    /** Bubble tap / mic button: open hands-free's command window if it's on, else tap-to-talk. */
-    fun talk() { if (memory.settings.earcons) sounds.activate(); handsFreeActivate?.invoke() ?: voice.toggle() }
+    /** Bubble tap / mic button: listen (tap again to stop). */
+    fun talk() {
+        if (voice.listening) { voice.stopListening(); return }
+        if (memory.settings.earcons) sounds.activate()
+        voice.startListening()
+    }
+
+    /** Volume up + down pressed together: start listening from anywhere. */
+    fun quickListen() {
+        haptics.success()
+        if (memory.settings.earcons) sounds.activate()
+        voice.startListening()
+    }
 
     /** Double-tap: a continuous conversation (keeps listening after each reply for a few seconds). */
-    fun startConversation() { if (memory.settings.earcons) sounds.activate(); handsFreeActivate?.invoke() ?: voice.startConversation() }
+    fun startConversation() { if (memory.settings.earcons) sounds.activate(); voice.startConversation() }
 
     /** "Note" chip: whatever you say next is captured to the inbox. */
     @Volatile var pendingPrefix: String? = null
@@ -155,7 +174,8 @@ class NexusApp : Application() {
 
     /** Start "Hey Nexus" if the user turned it on (must be called while the app is in front). */
     fun ensureHandsFree(context: android.content.Context) {
-        val want = memory.settings.handsFree && voskModels.modelPath(memory.settings.speechModel) != null
+        // Always-on "Hey Nexus" was replaced by bubble tap / volume up + down (simpler, no flicker).
+        val want = false
         if (want && ai.nexus.app.voice.NexusVoiceService.instance == null) ai.nexus.app.voice.NexusVoiceService.start(context)
         if (!want && ai.nexus.app.voice.NexusVoiceService.instance != null) ai.nexus.app.voice.NexusVoiceService.stop(context)
     }
@@ -234,6 +254,15 @@ class NexusApp : Application() {
         set(v) { secrets.edit().putString("model", v.trim()).apply(); nexus.brain = buildBrain() }
 
     private fun buildBrain() = apiKey?.takeIf { memory.settings.llmProvider == "claude" }?.let { runCatching { ClaudeBrain(it, model) }.getOrNull() }
+
+    /** 2.1: simpler listening. Turn off the old always-on modes once. */
+    private fun migrateTo21() {
+        val prefs = getSharedPreferences("nexus", MODE_PRIVATE)
+        if (prefs.getBoolean("migrated21", false)) return
+        memory.updateSettings { it.copy(handsFree = false, continuousListening = false, wakeWordEnabled = false, followUpSeconds = 6,
+            speakResponses = true, accurateListening = true, usePhoneBrain = true, volumeKeys = true) }
+        prefs.edit().putBoolean("migrated21", true).apply()
+    }
 
     fun applySettings() {
         val s = memory.settings

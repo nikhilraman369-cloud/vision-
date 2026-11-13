@@ -146,4 +146,24 @@ class V2Test {
         assertEquals("Expenses", Inbox.categorize("spent 300 rs on books"))
         assertEquals(1, Briefs.rank(listOf(TaskItem(title = "a", priority = 3), TaskItem(title = "b", priority = 1, dueMs = System.currentTimeMillis() + 3600_000)), null, System.currentTimeMillis()).indexOfFirst { it.title == "a" })
     }
+
+    @Test fun offlineBrainAnswersQuestionsWithoutAnyApiKey() {
+        val (n, out, _) = setup(ScreenPhone())
+        var prompts = 0
+        n.phoneBrain = ai.nexus.core.agent.PhoneBrain(ai.nexus.core.agent.TextGenerator { p ->
+            prompts++
+            if (p.contains("British butler")) "GST is a single tax on goods and services across India, Boss.<|im_end|>" else "unknown"
+        })
+        run(n, "explain GST in simple words")
+        assertTrue(out.any { it.contains("single tax") }, out.toString())
+        assertTrue(out.none { it.contains("API", true) }, out.toString())
+        run(n, "can you talk to me?")
+        assertTrue(out.last().contains("right here"), out.toString())
+    }
+
+    @Test fun withoutBrainItSaysHowToGetOneNotApiKey() {
+        val (n, out, _) = setup(ScreenPhone())
+        run(n, "why is the sky blue?")
+        assertTrue(out.any { it.contains("Download brain") }, out.toString())
+    }
 }

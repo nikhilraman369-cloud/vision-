@@ -43,57 +43,41 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mic: TextView
     private lateinit var input: EditText
     private lateinit var bubbleBtn: TextView
-    private lateinit var heyBtn: TextView
 
     private fun refreshBubbleBtn() { bubbleBtn.text = if (OverlayService.running) "Hide bubble" else "Show bubble" }
+    private var brainJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = vbox(0).apply { setBackgroundColor(Ui.BG) }
 
-        // Header
+        // Header: name + live status on the left, settings on the right.
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(14), dp(12), dp(6))
+            setPadding(dp(20), dp(14), dp(12), dp(4))
         }
         val titles = vbox(0).apply {
-            addView(label("NEXUS", 22f, bold = true))
-            status = label("Ready", 13f, Ui.MUTED); addView(status)
+            addView(label("NEXUS", 26f, bold = true).apply { letterSpacing = 0.12f })
+            status = label("Ready", 13f, Ui.MUTED).apply { isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END }; addView(status)
         }
         header.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        bubbleBtn = button("Bubble", Ui.CARD) {
+        header.addView(label("⚙", 22f).apply {
+            gravity = Gravity.CENTER; background = Ui.rounded(Ui.CARD, dp(22).toFloat()); contentDescription = "Settings"
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        root.addView(header, Ui.matchWrap())
+
+        // Three equal buttons — nothing cut off at the edge.
+        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(14), dp(8), dp(14), dp(6)) }
+        fun navBtn(t: String, color: Int, f: () -> Unit) = button(t, color, f).apply { textSize = 13.5f; isAllCaps = false; minHeight = 0; minimumHeight = 0; setPadding(dp(6), dp(12), dp(6), dp(12)) }
+        bubbleBtn = navBtn("Bubble", Ui.CARD) {
             if (OverlayService.running) OverlayService.stop(this) else if (Settings.canDrawOverlays(this)) startBubble() else renderSetup()
             bubbleBtn.postDelayed({ refreshBubbleBtn() }, 300)
         }
-        header.addView(bubbleBtn)
-        header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
-        header.addView(button("Panel", Ui.ACCENT) { startActivity(Intent(this, PanelActivity::class.java)) })
-        header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
-        header.addView(button("Memory", Ui.CARD) { startActivity(Intent(this, MemoryActivity::class.java)) })
-        header.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
-        header.addView(button("Settings", Ui.CARD) { startActivity(Intent(this, SettingsActivity::class.java)) })
-        root.addView(header, Ui.matchWrap())
-
-        // Second row: routines, help, and a debug helper to send exactly what NEXUS sees.
-        val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(12), 0, dp(12), dp(4)) }
-        heyBtn = button("Hey Nexus: off", Ui.CARD) {
-            val on = !app.memory.settings.handsFree
-            if (on && app.voskModels.modelPath(app.memory.settings.speechModel) == null) {
-                android.widget.Toast.makeText(this, "First download the offline speech model in Settings.", android.widget.Toast.LENGTH_LONG).show()
-                startActivity(Intent(this, SettingsActivity::class.java)); return@button
-            }
-            if (on && !ensureMic()) return@button
-            app.memory.updateSettings { it.copy(handsFree = on) }
-            app.ensureHandsFree(this)
-        }.apply { textSize = 13f }
-        tools.addView(heyBtn)
-        tools.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
-        tools.addView(button("Routines", Ui.CARD) { startActivity(Intent(this, RoutinesActivity::class.java)) }.apply { textSize = 13f })
-        tools.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
-        tools.addView(button("What can I say?", Ui.CARD) { startActivity(Intent(this, HelpActivity::class.java)) }.apply { textSize = 13f })
-        tools.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
-        tools.addView(button("Copy screen info", Ui.CARD) { copyDebug() }.apply { textSize = 13f })
-        root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(tools) }, Ui.matchWrap())
+        nav.addView(bubbleBtn, LinearLayout.LayoutParams(0, -2, 1f))
+        nav.addView(navBtn("Panel", Ui.ACCENT) { startActivity(Intent(this, PanelActivity::class.java)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        nav.addView(navBtn("Commands", Ui.CARD) { startActivity(Intent(this, HelpActivity::class.java)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        root.addView(nav, Ui.matchWrap())
 
         setupBox = vbox(12)
         root.addView(setupBox, Ui.matchWrap())
@@ -107,7 +91,7 @@ class MainActivity : AppCompatActivity() {
 
         // Suggestion chips
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), 0, dp(8), 0) }
-        listOf("Open Instagram and go to Reels", "What's on my screen?", "Read my notifications", "Timer 5 minutes", "Watch me", "YouTube pe filmmaking search karo")
+        listOf("What should I do now?", "Open Instagram and go to Reels", "Read my notifications", "Study mode", "Quiz me", "Morning brief")
             .forEach { s -> chips.addView(button(s, Ui.CARD) { app.ask(s) }.apply { textSize = 13f }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) }) }
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, Ui.matchWrap())
 
@@ -133,12 +117,6 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch { app.chat.collect { render(it) } }
         lifecycleScope.launch { app.status.collect { status.text = it } }
         lifecycleScope.launch {
-            kotlinx.coroutines.flow.combine(ai.nexus.app.voice.NexusVoiceService.on, ai.nexus.app.voice.NexusVoiceService.state) { on, st -> on to st }.collect { (on, st) ->
-                heyBtn.text = if (!on) "Hey Nexus: off" else if (st == ai.nexus.core.voice.HandsFreeState.ACTIVE_COMMAND_WINDOW) "Hey Nexus: listening" else "Hey Nexus: on"
-                heyBtn.background = Ui.rounded(if (on) Ui.OK else Ui.CARD, dp(12).toFloat())
-            }
-        }
-        lifecycleScope.launch {
             app.voice.state.collect { v ->
                 mic.background = Ui.rounded(if (v == VoiceState.LISTENING || v == VoiceState.HEARING) Ui.OK else Ui.ACCENT, dp(26).toFloat())
                 if (v == VoiceState.LISTENING) status.text = "Listening…"
@@ -154,7 +132,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleAction(intent) }
 
-    override fun onResume() { super.onResume(); renderSetup(); renderHome(); refreshBubbleBtn(); app.ensureHandsFree(this) }
+    override fun onResume() {
+        super.onResume(); renderSetup(); renderHome(); refreshBubbleBtn(); app.ensureHandsFree(this)
+        if (app.brainManager.state.value is ai.nexus.app.brain.PhoneBrainManager.State.Downloading) watchBrain()
+    }
 
     /** The bubble's stuck card sends "Type instruction" here. */
     private fun handleAction(i: Intent?) {
@@ -181,15 +162,21 @@ class MainActivity : AppCompatActivity() {
         homeBox.addView(card, Ui.matchWrap().apply { topMargin = dp(4); bottomMargin = dp(4) })
     }
 
-    /** First run: offer the butler voice once. */
+    /** First run (and once after updating to 2.1): offer the brain and the butler voice in one go. */
     private fun offerVoicePack() {
         val prefs = getSharedPreferences("nexus", MODE_PRIVATE)
         val id = app.memory.settings.voicePack
-        if (prefs.getBoolean("voiceOffered", false) || app.voicePacks.installed(id)) return
-        prefs.edit().putBoolean("voiceOffered", true).apply()
-        android.app.AlertDialog.Builder(this).setTitle("Give NEXUS its butler voice?")
-            .setMessage("A natural British male voice that runs fully offline (about 60 MB, one-time download). You can change it later in Panel → Voice.")
-            .setPositiveButton("Download") { _, _ -> app.voicePacks.download(id, wifiOnly = false) { app.loadVoice() } }
+        val needVoice = !app.voicePacks.installed(id)
+        val needBrain = app.brainManager.installedModel() == null && app.brainManager.state.value !is ai.nexus.app.brain.PhoneBrainManager.State.Downloading
+        if (prefs.getBoolean("offered21", false) || (!needVoice && !needBrain)) return
+        prefs.edit().putBoolean("offered21", true).apply()
+        val what = listOfNotNull(if (needBrain) "• Brain — answers your questions and chats (1.6 GB)" else null, if (needVoice) "• Butler voice — natural British voice (≈64 MB)" else null)
+        android.app.AlertDialog.Builder(this).setTitle("Finish setting up NEXUS")
+            .setMessage("One-time free downloads, then everything works offline:\n\n" + what.joinToString("\n") + "\n\nWi-Fi recommended.")
+            .setPositiveButton("Download") { _, _ ->
+                if (needBrain) { app.brainManager.download(ai.nexus.app.brain.PhoneBrainManager.MODELS.first { it.id == "smart" }); watchBrain() }
+                if (needVoice) app.voicePacks.download(id, wifiOnly = false) { app.loadVoice() }
+            }
             .setNegativeButton("Later", null).show()
     }
 
@@ -217,7 +204,7 @@ class MainActivity : AppCompatActivity() {
     private fun render(lines: List<ai.nexus.app.ChatLine>) {
         chatBox.removeAllViews()
         if (lines.isEmpty()) {
-            chatBox.addView(label("Hi! Talk to me naturally — in English, Hindi or Hinglish.\n\nTry: “Open YouTube, search filmmaking, play the first video and like it”, or “Rahul ko WhatsApp pe bolo ki main das minute mein pahunchunga”.", 15f, Ui.MUTED))
+            chatBox.addView(label("Good to see you, ${app.memory.settings.addressAs}.\n\nTap 🎤 or the floating N, or press volume up + down together, and just talk. Ask me anything, or tell me what to do on your phone. English, Hindi or Hinglish.\n\nTry: “Open YouTube and play the first video”, “Rahul ko WhatsApp pe bolo main 10 minute mein aa raha hoon”, or “Explain GST in simple words”.", 15f, Ui.MUTED))
         }
         lines.forEach { chatBox.addView(bubble(it.text, it.fromUser, it.detail)) }
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
@@ -257,22 +244,15 @@ class MainActivity : AppCompatActivity() {
                 val perms = if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO) else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
                 ActivityCompat.requestPermissions(this, perms, 3)
             },
-            Step("Phone brain (free)", "Download once so NEXUS understands rough commands offline", app.brainManager.installedModel() != null) {
-                startActivity(Intent(this, SettingsActivity::class.java))
-            },
-            Step("Offline voice (free)", "Download the speech model for hands-free \"Hey Nexus\"", app.voskModels.modelPath(app.memory.settings.speechModel) != null) {
-                startActivity(Intent(this, SettingsActivity::class.java))
+            Step("Brain (free)", brainText(), app.brainManager.installedModel() != null) {
+                app.brainManager.download(ai.nexus.app.brain.PhoneBrainManager.MODELS.first { it.id == "smart" })
+                watchBrain()
             },
         )
         val missing = steps.filter { !it.ok }
-        if (missing.isEmpty()) {
-            setupBox.addView(button(if (OverlayService.running) "Hide floating bubble" else "Show floating bubble", Ui.CARD) {
-                if (OverlayService.running) OverlayService.stop(this) else startBubble()
-                setupBox.postDelayed({ renderSetup() }, 300)
-            })
-            return
-        }
-        setupBox.addView(label("Set up NEXUS (${steps.size - missing.size}/${steps.size})", 14f, Ui.MUTED, bold = true))
+        if (missing.isEmpty()) return
+        setupBox.setPadding(dp(14), dp(4), dp(14), dp(4))
+        setupBox.addView(label("Set up NEXUS · ${steps.size - missing.size} of ${steps.size} done", 13f, Ui.MUTED, bold = true))
         for (s in missing.take(3)) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -280,11 +260,26 @@ class MainActivity : AppCompatActivity() {
             }
             val txt = vbox(0).apply { addView(label(s.title, 15f, bold = true)); addView(label(s.why, 12.5f, Ui.MUTED)) }
             row.addView(txt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            row.addView(button("Allow") { s.fix() })
+            val downloading = s.title.startsWith("Brain") && app.brainManager.state.value is ai.nexus.app.brain.PhoneBrainManager.State.Downloading
+            row.addView(button(if (s.title.startsWith("Brain")) (if (downloading) "…" else "Download") else "Allow") { if (!downloading) s.fix() }.apply { isAllCaps = false })
             setupBox.addView(row, Ui.matchWrap().apply { topMargin = dp(6) })
         }
-        if (Settings.canDrawOverlays(this) && granted(Manifest.permission.RECORD_AUDIO) && !OverlayService.running) {
-            setupBox.addView(button("Show floating bubble", Ui.CARD) { startBubble() }, Ui.matchWrap().apply { topMargin = dp(6) })
+    }
+
+    private fun brainText(): String = when (val st = app.brainManager.state.value) {
+        is ai.nexus.app.brain.PhoneBrainManager.State.Downloading -> "Downloading… ${st.percent}% (keep NEXUS open on Wi-Fi)"
+        is ai.nexus.app.brain.PhoneBrainManager.State.Error -> st.message
+        else -> "So NEXUS can answer your questions and chat. 1.6 GB, once, works offline."
+    }
+
+    /** Live download progress on the setup card. */
+    private fun watchBrain() {
+        if (brainJob?.isActive == true) return
+        brainJob = lifecycleScope.launch {
+            app.brainManager.state.collect { st ->
+                renderSetup()
+                if (st is ai.nexus.app.brain.PhoneBrainManager.State.Ready) { status.text = "Brain ready"; brainJob?.cancel() }
+            }
         }
     }
 

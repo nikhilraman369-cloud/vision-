@@ -1,5 +1,13 @@
 # NEXUS v2 — Progress
 
+## 2.1.0 (versionCode 8): fixes from the first phone test
+- **Brain answers questions offline:** the phone brain (Qwen 2.5, Smart 1.5B recommended) now chats and answers, using memory and recent conversation. No more "connect API". Without the brain, NEXUS says how to download it (with live progress).
+- **Listening:** the always-on "Hey Nexus", continuous listening and wake-word settings are removed. Tap the N (or press volume up + down together) to listen. After each reply NEXUS listens 6 s for a follow-up, then sleeps. The recogniser restarts silently inside a window, so the bubble no longer flickers. Longer silence allowance, so you aren't cut off mid-sentence.
+- **Voice no longer cuts off:** the audio track drains fully before release; NEXUS doesn't hear itself (the old barge-in listener is gone).
+- **Volume up + down = listen**, via the accessibility service (screen on or lock screen). A "Listening…" pill shows on any screen; tap it to cancel.
+- **22 voices:** Kokoro studio pack (George, Lewis, Emma, Isabella, Adam, Michael, Bella, Sarah, Nicole, Sky) plus Piper packs (Alan, Northern male, Semaine ×4, Alba, Jenny, Ryan, Joe, Lessac, Amy). One download per pack; switching between voices in a pack is instant.
+- **Cleaner UI:** new home header (title no longer squeezed), three equal buttons, a settings gear, and a much shorter Settings (You, Brain, Voice, Listening, Safety).
+
 Version 2.0.0 (versionCode 7). Built on 0.6 (upgraded, not rebuilt).
 
 ## Done

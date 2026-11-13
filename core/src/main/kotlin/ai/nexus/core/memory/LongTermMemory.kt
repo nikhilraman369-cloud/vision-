@@ -74,7 +74,9 @@ data class UserSettings(
     /** "ask" | "always" | "off": saving facts you mention in passing. */
     val autoCapture: String = "ask",
     /** Seconds the conversation stays open after a reply. */
-    val followUpSeconds: Int = 8,
+    val followUpSeconds: Int = 6,
+    /** Press volume up + down together to start listening. */
+    val volumeKeys: Boolean = true,
     val morningBrief: String = "07:30",
     val eveningReview: String = "21:30",
     val briefsEnabled: Boolean = true,
@@ -97,7 +99,7 @@ data class UserSettings(
     val notificationWatching: Boolean = true,
     val voiceMuted: Boolean = false,
     /** Use the online speech engine (more accurate, especially Hinglish and names). */
-    val accurateListening: Boolean = false,
+    val accurateListening: Boolean = true,
     val sendScreenshotsToCloud: Boolean = false,
 )
 

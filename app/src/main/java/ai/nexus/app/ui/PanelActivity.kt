@@ -162,7 +162,7 @@ class PanelActivity : AppCompatActivity() {
         ).forEach { (k, t) -> box.addView(button(t, Ui.CARD) { open(k) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) }) }
         box.addView(button("🧠  Memory", Ui.CARD) { startActivity(Intent(this, MemoryActivity::class.java)) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) })
         box.addView(button("⟳  Routines (shortcuts)", Ui.CARD) { startActivity(Intent(this, RoutinesActivity::class.java)) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) })
-        box.addView(button("⚡  Speech, AI & phone brain settings", Ui.CARD) { startActivity(Intent(this, SettingsActivity::class.java)) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) })
+        box.addView(button("⚙  Settings — brain, voice, listening", Ui.CARD) { startActivity(Intent(this, SettingsActivity::class.java)) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) })
     }
 
     private fun tasks() {
@@ -294,36 +294,45 @@ class PanelActivity : AppCompatActivity() {
     }
 
     private fun voice() {
-        title("Voice", "A calm British male voice that runs on your phone. Download a pack once.")
-        spinner("Voice engine", listOf("neural" to "Neural voice pack (best)", "system" to "Phone's British voice (no download)"), s.voiceEngine) { v -> update { it.copy(voiceEngine = v) }; app.loadVoice(); refresh() }
+        title("Voice", "All voices run offline on your phone. Download a pack once, then tap any voice in it to use it.")
+        spinner("Voice engine", listOf("neural" to "Neural voices (best)", "system" to "Phone's own voice (no download)"), s.voiceEngine) { v -> update { it.copy(voiceEngine = v) }; app.loadVoice(); refresh() }
         val st = app.voicePacks.state.value
-        if (st is VoicePackManager.State.Downloading) note("Downloading ${st.id}… ${st.percent}%")
-        if (st is VoicePackManager.State.Unpacking) note("Unpacking ${st.id}…")
+        if (st is VoicePackManager.State.Downloading) note("Downloading… ${st.percent}%")
+        if (st is VoicePackManager.State.Unpacking) note("Unpacking…")
         if (st is VoicePackManager.State.Error) note("⚠ ${st.message}")
-        app.cinematic.lastError?.let { note("Voice engine: $it — using the phone's British voice instead.") }
-        for (p in VoicePackManager.PACKS) card {
-            val inst = app.voicePacks.installed(p.id)
-            addView(label(p.title + if (s.voicePack == p.id) "  ● selected" else "", 14.5f, bold = true))
-            addView(label("${p.size}${if (inst) " · downloaded" else ""}", 12f, Ui.MUTED))
-            actions(
-                *(if (!inst) arrayOf<Pair<String, () -> Unit>>("Download" to { app.voicePacks.download(p.id, s.wifiOnlyDownloads) { runOnUiThread { update { it.copy(voicePack = p.id, voiceEngine = "neural") }; app.loadVoice() } } })
-                else arrayOf("Use" to { update { it.copy(voicePack = p.id, voiceEngine = "neural") }; app.loadVoice(); refresh() }, "Delete" to { app.voicePacks.delete(p.id); refresh() })),
-                "Test" to { if (s.voicePack != p.id && inst) { update { it.copy(voicePack = p.id) }; app.loadVoice() }; window.decorView.postDelayed({ app.voice.speak("Good evening, ${s.addressAs}. All systems are ready.") }, 900) },
-            )
+        app.cinematic.lastError?.let { note("Voice engine: $it — using the phone's voice instead.") }
+        fun use(id: String, test: Boolean) {
+            update { it.copy(voicePack = id, voiceEngine = "neural") }
+            app.loadVoice(); refresh()
+            if (test) window.decorView.postDelayed({ app.voice.speak("Good evening, ${s.addressAs}. All systems are ready, and I'm at your service.") }, 700)
+        }
+        for ((folder, voices) in VoicePackManager.groups()) card {
+            val first = voices.first()
+            val inst = app.voicePacks.installed(first.id)
+            val packName = if (folder.startsWith("kokoro")) "Studio pack — ${voices.size} voices" else if (voices.size > 1) "Semaine pack — ${voices.size} voices" else first.title
+            addView(label(packName, 15.5f, bold = true))
+            addView(label(first.size + if (inst) " · downloaded" else "", 12f, Ui.MUTED))
+            if (!inst) actions("Download" to { app.voicePacks.download(first.id, s.wifiOnlyDownloads) { runOnUiThread { use(first.id, true) } } })
+            if (inst || voices.size > 1) for (v in voices) {
+                val selected = s.voicePack == v.id
+                val row = LinearLayout(this@PanelActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
+                row.addView(label((if (selected) "● " else "○ ") + v.title, 14f, if (selected) Ui.OK else Ui.TEXT), LinearLayout.LayoutParams(0, -2, 1f))
+                if (inst) row.addView(button("▶ Use", if (selected) Ui.OK else Ui.BG) { use(v.id, true) }.apply { textSize = 12f })
+                addView(row, Ui.matchWrap())
+            }
+            if (inst) actions("Delete pack" to { app.voicePacks.delete(first.id); refresh() })
         }
         toggle("Download voice packs on Wi-Fi only", s.wifiOnlyDownloads) { v -> update { it.copy(wifiOnlyDownloads = v) } }
         slider("Speed", 60, 160, (s.speechRate * 100).toInt(), { "${it}%" }) { v -> update { it.copy(speechRate = v / 100f) } }
         slider("Pitch", 70, 130, (s.voicePitch * 100).toInt(), { "${it}%" }) { v -> update { it.copy(voicePitch = v / 100f) } }
         toggle("\"AI presence\" effect (subtle reverb + warmth)", s.voiceEffects) { v -> update { it.copy(voiceEffects = v) } }
-        toggle("Earcons (chime on listen, tones on success/error)", s.earcons) { v -> update { it.copy(earcons = v) } }
+        toggle("Chime when listening starts", s.earcons) { v -> update { it.copy(earcons = v) } }
         toggle("Speak replies", s.speakResponses) { v -> update { it.copy(speakResponses = v) } }
-        toggle("Spoken \"On it, Boss\" / \"Done\" confirmations", s.spokenAcks) { v -> update { it.copy(spokenAcks = v) } }
-        slider("Follow-up listening after a reply", 3, 15, s.followUpSeconds, { "${it}s" }) { v -> update { it.copy(followUpSeconds = v) } }
-        box.addView(button("Wake word, language & speech engine →", Ui.CARD) { startActivity(Intent(this, SettingsActivity::class.java)) }, Ui.matchWrap().apply { topMargin = dp(10) })
+        toggle("Say \"On it\" for longer tasks", s.spokenAcks) { v -> update { it.copy(spokenAcks = v) } }
     }
 
     private fun bubble() {
-        title("Bubble", "Docked half-hidden at the edge. Tap = command card · Double-tap = conversation · Long-press = menu · Drag = move / drop at bottom to close.")
+        title("Bubble", "Docked half-hidden at the edge. Tap = talk · Double-tap = card · Long-press = menu · Drag = move / drop at bottom to close.")
         spinner("Side", listOf("right" to "Right edge", "left" to "Left edge"), s.bubbleSide) { v -> update { it.copy(bubbleSide = v) }; restartBubble() }
         slider("Size", 40, 72, s.bubbleSize, { "${it}dp" }) { v -> update { it.copy(bubbleSize = v) }; restartBubble() }
         slider("Opacity when idle", 30, 100, (s.bubbleOpacity * 100).toInt(), { "${it}%" }) { v -> update { it.copy(bubbleOpacity = v / 100f) }; restartBubble() }

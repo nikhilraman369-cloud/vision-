@@ -15,7 +15,11 @@ object OfflineChat {
         "I asked the Wi-Fi for a date. It said we have no connection.",
     )
 
-    private val known = Regex("^(hi|hello|hey|namaste|hii+|yo)\\b|how are you|kaise ho|thank|shukriya|dhanyavaad|\\btime\\b|\\bdate\\b|what day|today|battery|joke|your name|who are you|what can you do|\\bhelp\\b")
+    private val known = Regex("^(hi|hello|hey|namaste|hii+|yo)\\b|how are you|kaise ho|thank|shukriya|dhanyavaad|\\btime\\b|\\bdate\\b|what day|today|battery|joke|your name|who are you|what can you do|\\bhelp\\b|talk to me|baat karo|are you there|you there")
+
+    private val factualRx = Regex("\\b(time|date|what day|battery)\\b|kitne baje|^(hi|hello|hey|namaste|hii+)$")
+    /** Live facts the language model can't know (time, date, battery) or a bare greeting. */
+    fun factual(text: String): Boolean = factualRx.containsMatchIn(Fuzzy.normalize(text))
 
     /** True when this can be answered offline without any model. */
     fun handles(text: String): Boolean = known.containsMatchIn(Fuzzy.normalize(text))
@@ -31,10 +35,12 @@ object OfflineChat {
             t.contains("time") && (t.contains("what") || t.contains("kitne")) -> "It's ${SimpleDateFormat("h:mm a", Locale.ENGLISH).format(now)}."
             t.contains("date") || t.contains("what day") || t.contains("today") -> "Today is ${SimpleDateFormat("EEEE, d MMMM yyyy", Locale.ENGLISH).format(now)}."
             t.contains("battery") -> system.batteryPercent()?.let { "Your battery is at $it%." } ?: "I can't read the battery level right now."
+            t.contains("talk to me") || t.contains("baat karo") || t.contains("are you there") || t.contains("you there") ->
+                "Always, ${memory.settings.addressAs}. I'm right here. What's on your mind?"
             t.contains("joke") -> jokes.random()
-            t.contains("your name") || t.contains("who are you") -> "I'm NEXUS, your personal assistant. I can run your phone for you and, with the cloud AI connected, chat about anything."
+            t.contains("your name") || t.contains("who are you") -> "I'm NEXUS, your personal assistant, at your service. I run your phone, remember what matters to you, and answer your questions."
             t.contains("what can you do") || t.contains("help") -> "I can open apps, search YouTube, like and save Reels, write comments, message people on WhatsApp, make calls, change settings, read your screen and notifications — just tell me what you want in your own words."
-            else -> "I can do phone tasks offline, but for questions like that I need the Claude AI connected — add your API key in NEXUS settings."
+            else -> "My thinking brain isn't downloaded yet, ${memory.settings.addressAs}. Open NEXUS and tap Download brain. It's free, one time, and works offline."
         }
     }
 }

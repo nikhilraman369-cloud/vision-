@@ -726,7 +726,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         if (rx("^(?:pause|stop|turn off) (?:watching )?notifications?(?: watching| reading)?$").matches(c)) return listOf(Command.Toggle("notifications", false))
         if (rx("^(?:resume|start|turn on) (?:watching )?notifications?(?: watching| reading)?$").matches(c)) return listOf(Command.Toggle("notifications", true))
         if (rx("^(?:mute (?:your )?voice|be quiet|stop talking|chup|chup raho|not now|abhi nahi)$").matches(c)) return listOf(Command.Toggle("voice", false))
-        if (rx("^(?:unmute (?:your )?voice|speak again|talk to me|you can talk)$").matches(c)) return listOf(Command.Toggle("voice", true))
+        if (rx("^(?:(?:can you |will you |please )?(?:unmute (?:your )?voice|speak again|talk to me|you can talk)\\??)$").matches(c)) return listOf(Command.Toggle("voice", true))
         rx("^(?:stop|end|exit|leave|turn off|quit)(?: the)? ?([a-z]+)? mode$|^([a-z]+) mode (?:off|band karo|khatam)$").matchEntire(c)?.let {
             val name = it.groupValues[1].ifBlank { it.groupValues[2] }.trim().ifBlank { null }
             if (name == null || !rx("^(?:dark|night|airplane|aeroplane|flight|silent|vibrate|dnd)$").matches(name)) return listOf(Command.StopMode(name))
@@ -905,6 +905,11 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     }
 
     companion object {
+        /** A question or small talk (to be answered), as opposed to a rough command (to be done). */
+        fun isConversational(text: String): Boolean {
+            val l = text.trim().lowercase()
+            return QUESTION.containsMatchIn(l) || l.endsWith("?") || CONVERSATION.containsMatchIn(l)
+        }
         const val SAME_CONTACT = "__same_contact__"
         private val TEACH_STOP = Regex("^(?:done|stop watching|stop recording|that'?s it|ho gaya|bas ho gaya|finish(?:ed)?)[,.]?\\s*(?:save (?:it|this) as|call it|name it|naam rakho)\\s+(.+)$", RegexOption.IGNORE_CASE)
         private val PAYLOAD_START = Regex("^\\s*(?:(?:please|pls|can you|could you|just|hey nexus)\\s+)*(?:type|write|send|comment|reply|message|text|note|post|likho)\\b|\\b(?:saying|that says)\\b", RegexOption.IGNORE_CASE)

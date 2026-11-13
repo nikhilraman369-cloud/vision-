@@ -8,7 +8,7 @@ import ai.nexus.core.nlu.Fuzzy
  */
 object CommandCatalog {
     val sections: List<Pair<String, List<String>>> = listOf(
-        "HANDS-FREE" to listOf("Hey Nexus, open Instagram", "Hey Nexus, play Skyfall on Spotify", "Hey Nexus, reply to Rahul saying on my way"),
+        "ASK ME ANYTHING (tap N or press volume up + down)" to listOf("Can you talk to me?", "Explain GST in simple words", "What is depreciation?", "Give me a quick pep talk", "How do I prepare for CA Inter audit?"),
         "ON ANY SCREEN" to listOf("What's on my screen", "Read this page", "Tap Settings", "Open the second result", "Scroll down", "Go back", "Tap top right", "Double tap center", "Send this to Arjun"),
         "TYPING IN ANY APP" to listOf("Type do it later", "Send see you tomorrow", "Copy this", "Paste"),
         "YOUTUBE" to listOf("Search filmmaking on YouTube", "Open the first video", "Open the first short", "Go to Shorts", "Next short", "Like it", "Comment amazing video", "Pause the video"),

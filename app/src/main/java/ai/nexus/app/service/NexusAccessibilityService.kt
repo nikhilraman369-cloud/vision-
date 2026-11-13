@@ -17,6 +17,8 @@ import ai.nexus.core.device.GlobalAction
 import ai.nexus.core.screen.Bounds
 import ai.nexus.core.screen.ScreenSnapshot
 import ai.nexus.core.screen.UiNode
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -64,7 +66,100 @@ class NexusAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         NexusApp.get(this).onAccessibilityConnected()
+        startListeningPill()
     }
+
+
+    // ------------------------------------------------ volume up + down = "listen"
+    private var upHeld = 0L
+    private var downHeld = 0L
+    private var comboFired = false
+    private var musicBefore = -1
+    private var ringBefore = -1
+
+    override fun onKeyEvent(e: android.view.KeyEvent): Boolean {
+        val code = e.keyCode
+        if (code != android.view.KeyEvent.KEYCODE_VOLUME_UP && code != android.view.KeyEvent.KEYCODE_VOLUME_DOWN) return false
+        val app = NexusApp.get(this)
+        if (!app.memory.settings.volumeKeys) return false
+        val am = getSystemService(android.media.AudioManager::class.java)
+        if (am?.mode == android.media.AudioManager.MODE_IN_CALL || am?.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) return false
+        val isUp = code == android.view.KeyEvent.KEYCODE_VOLUME_UP
+        val now = android.os.SystemClock.uptimeMillis()
+        if (e.action == android.view.KeyEvent.ACTION_DOWN) {
+            if (e.repeatCount > 0) return comboFired
+            val other = if (isUp) downHeld else upHeld
+            if (other == 0L && !comboFired) {
+                // First key of a possible combo: remember volumes so we can undo its step.
+                musicBefore = am?.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) ?: -1
+                ringBefore = am?.getStreamVolume(android.media.AudioManager.STREAM_RING) ?: -1
+            }
+            if (isUp) upHeld = now else downHeld = now
+            if (other != 0L && now - other < 700 && !comboFired) {
+                comboFired = true
+                runCatching { if (musicBefore >= 0) am?.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, musicBefore, 0) }
+                runCatching { if (ringBefore > 0) am?.setStreamVolume(android.media.AudioManager.STREAM_RING, ringBefore, 0) }
+                app.quickListen()
+                return true
+            }
+            return false
+        }
+        if (e.action == android.view.KeyEvent.ACTION_UP) {
+            if (isUp) upHeld = 0 else downHeld = 0
+            val consumed = comboFired
+            if (upHeld == 0L && downHeld == 0L) comboFired = false
+            return consumed
+        }
+        return false
+    }
+
+    // ------------------------------------------------ "Listening…" popup (works on any screen, even the lock screen)
+    private val pillScope = kotlinx.coroutines.MainScope()
+    private var pill: android.widget.TextView? = null
+
+    private fun startListeningPill() {
+        val app = NexusApp.get(this)
+        pillScope.launch {
+            kotlinx.coroutines.flow.combine(app.voice.state, app.voice.partial, app.nexus.state) { v, p, a -> Triple(v, p, a) }.collect { (v, p, a) ->
+                val text = when {
+                    v == ai.nexus.app.voice.VoiceState.HEARING -> "🎙  " + p.ifBlank { "Listening…" }
+                    v == ai.nexus.app.voice.VoiceState.LISTENING -> "🎙  Listening… " + p
+                    app.voice.inConversation() && a == ai.nexus.core.agent.AgentState.THINKING -> "✦  Thinking…"
+                    else -> null
+                }
+                showPill(text?.trim())
+            }
+        }
+    }
+
+    private fun showPill(text: String?) {
+        val wm = getSystemService(android.view.WindowManager::class.java) ?: return
+        if (text == null) {
+            pillWanted = null
+            // Small delay so a quick restart between listening windows doesn't make it blink.
+            pill?.postDelayed({ if (pillWanted == null) pill?.let { p -> runCatching { wm.removeView(p) }; pill = null } }, 400)
+            return
+        }
+        pillWanted = text
+        val dp = resources.displayMetrics.density
+        val p = pill ?: android.widget.TextView(this).apply {
+            setTextColor(0xFFFFFFFF.toInt()); textSize = 15f
+            setPadding((18 * dp).toInt(), (10 * dp).toInt(), (18 * dp).toInt(), (10 * dp).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 24 * dp; setColor(0xF0151526.toInt()); setStroke((2 * dp).toInt(), 0xFF00C2A8.toInt()) }
+            maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.START
+            setOnClickListener { NexusApp.get(this@NexusAccessibilityService).voice.stopListening() }
+            val lp = android.view.WindowManager.LayoutParams(
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT, android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+                android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                android.graphics.PixelFormat.TRANSLUCENT,
+            ).apply { gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL; y = (48 * dp).toInt() }
+            runCatching { wm.addView(this, lp) }.onFailure { return }
+            pill = this
+        }
+        p.text = text
+    }
+    @Volatile private var pillWanted: String? = null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
@@ -156,6 +251,8 @@ class NexusAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        pillScope.cancel()
+        runCatching { pill?.let { getSystemService(android.view.WindowManager::class.java)?.removeView(it) } }; pill = null
         cacheThread.quitSafely()
         if (instance === this) instance = null
         super.onDestroy()

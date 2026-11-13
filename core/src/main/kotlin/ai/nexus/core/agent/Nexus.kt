@@ -85,6 +85,8 @@ class Nexus(
 
     /** Free on-device model for rough commands (null until downloaded/loaded). */
     @Volatile var phoneBrain: PhoneBrain? = null
+    /** What to say when a question needs the phone brain but it isn't ready (e.g. download progress). */
+    @Volatile var phoneBrainMissing: (() -> String?)? = null
 
     val ctx = WorkingContext()
     val apps = AppDirectory(device, memory)
@@ -180,8 +182,10 @@ class Nexus(
             // before (instant), else the phone brain — never the whole request.
             val learnPairs = ArrayList<Pair<String, List<Command>>>()
             val cloudReady = brain != null && memory.settings.useCloudAi
-            fun unclearStep(st: ParsedStep) = st.command is Command.Agentic || st.confidence < 0.55 ||
-                (st.command is Command.Chat && !cloudReady && !OfflineChat.handles(st.source) && !Calc.looksLikeMath(st.source))
+            // Real questions go to the conversation brain (chat); rough commands go to the translator.
+            fun isQuestion(st: ParsedStep) = st.command is Command.Chat && (cloudReady || IntentParser.isConversational(st.source))
+            fun unclearStep(st: ParsedStep) = !isQuestion(st) && (st.command is Command.Agentic || st.confidence < 0.55 ||
+                (st.command is Command.Chat && !cloudReady && !OfflineChat.handles(st.source) && !Calc.looksLikeMath(st.source)))
             if (request.steps.any(::unclearStep)) {
                 val pb = phoneBrain?.takeIf { memory.settings.usePhoneBrain }
                 val newSteps = ArrayList<ParsedStep>()
@@ -195,8 +199,7 @@ class Nexus(
                     val snap = kotlinx.coroutines.withTimeoutOrNull(1500) { ops.screen() }
                     val visible = visibleLabelFor(st.source, snap)
                     if (visible != null) { newSteps += ParsedStep(Command.Tap(visible), st.source, 0.9); continue }
-                    val isQuestion = st.command is Command.Chat && cloudReady
-                    if (pb != null && !isQuestion && !pb.busy) {
+                    if (pb != null && !pb.busy) {
                         setState(AgentState.THINKING)
                         // Detached: if the model is slow or stuck, we stop waiting and it can never block later commands.
                         val work = scope.async { runCatching { pb.translate(st.source, snap) }.getOrNull() }
@@ -916,7 +919,11 @@ class Nexus(
         }
         is Command.Toggle -> when (cmd.what) {
             "notifications" -> { memory.updateSettings { it.copy(notificationWatching = cmd.on) }; Outcome.Success(if (cmd.on) "Watching notifications again." else "Paused notification watching.") }
-            else -> { memory.updateSettings { it.copy(voiceMuted = !cmd.on) }; emit(NexusEvent.VoiceMuted(!cmd.on)); Outcome.Success(if (cmd.on) "Voice back on, $boss." else null) }
+            else -> {
+                val wasMuted = memory.settings.voiceMuted
+                memory.updateSettings { it.copy(voiceMuted = !cmd.on) }; emit(NexusEvent.VoiceMuted(!cmd.on))
+                Outcome.Success(if (!cmd.on) null else if (wasMuted) "Voice back on, $boss." else "Always, $boss. I'm right here. What's on your mind?")
+            }
         }
         Command.ReadNotes -> memory.items.filter { it.kind == MemoryKind.NOTE }.let { n ->
             Outcome.Success(if (n.isEmpty()) "You have no notes." else "Your notes: " + n.takeLast(10).joinToString(". ") { it.value })
@@ -1368,7 +1375,19 @@ class Nexus(
             val screen = ops.screen()
             val extra = screen?.let { "\nOn screen now (${ScreenClassifier.classify(it)}):\n" + it.toPromptText(40) } ?: ""
             runCatching { b.chat(history, text, contextText() + extra) }.getOrElse { "I couldn't reach the AI service (${it.message}). Phone controls still work offline." }
-        } else OfflineChat.reply(text, memory, system)
+        } else {
+            val pb = phoneBrain
+            if (OfflineChat.factual(text) || (pb == null && OfflineChat.handles(text))) OfflineChat.reply(text, memory, system)
+            else if (pb == null) phoneBrainMissing?.invoke() ?: OfflineChat.reply(text, memory, system)
+            else {
+                val history = ctx.conversation.toList().dropLast(1).map { it.role to it.text }
+                val now = SimpleDateFormat("EEEE d MMMM, h:mm a", Locale.ENGLISH).format(Date(system.nowMs()))
+                val facts = memory.relevant(text, 700).joinToString("\n") { (it.key?.let { k -> "$k: " } ?: "") + it.value }
+                val work = scope.async { runCatching { pb.answer(text, facts, history, boss, now) }.getOrNull() }
+                kotlinx.coroutines.withTimeoutOrNull(ANSWER_TIMEOUT_MS) { work.await() }
+                    ?: "Sorry $boss, I'm still thinking about the last thing. Ask me again in a moment."
+            }
+        }
         say(reply)
     }
 
@@ -1506,7 +1525,8 @@ class Nexus(
 
     companion object {
         const val MAX_AGENT_STEPS = 20
-        const val PHONE_BRAIN_TIMEOUT_MS = 4000L
+        const val PHONE_BRAIN_TIMEOUT_MS = 5000L
+        const val ANSWER_TIMEOUT_MS = 30_000L
         const val STEP_TIMEOUT_MS = 30_000L
     }
 }

@@ -55,6 +55,35 @@ class PhoneBrain(private val gen: TextGenerator) {
         return cmds.takeIf { it.isNotEmpty() }
     }
 
+    /**
+     * Free, offline conversation: answers questions and small talk with the
+     * on-device model. Short replies (they are spoken aloud). Null if busy or empty.
+     */
+    suspend fun answer(question: String, facts: String, history: List<Pair<String, String>>, boss: String, now: String): String? {
+        if (!busyFlag.compareAndSet(false, true)) return null
+        try {
+            val p = buildString {
+                append("<|im_start|>system\n")
+                append("You are NEXUS, a loyal, witty, warm personal assistant with the manner of a calm British butler. ")
+                append("Address the user as \"").append(boss).append("\". Reply in the user's language (English, Hindi or Hinglish). ")
+                append("Answer helpfully and correctly in 1 to 3 short spoken sentences. No lists, no markdown, no emojis. ")
+                append("If you don't know something, say so briefly. Current time: ").append(now).append(".\n")
+                if (facts.isNotBlank()) append("What you know about the user:\n").append(facts.take(900)).append('\n')
+                append("<|im_end|>\n")
+                for ((role, text) in history.takeLast(6)) {
+                    append("<|im_start|>").append(if (role == "user") "user" else "assistant").append('\n').append(text.take(300)).append("<|im_end|>\n")
+                }
+                append("<|im_start|>user\n").append(question).append("<|im_end|>\n<|im_start|>assistant\n")
+            }
+            val out = gen.generate(p).substringBefore("<|im_end|>").substringBefore("<|im_start|>")
+                .replace(Regex("[*#_`]+"), "").replace(Regex("\\s+"), " ").trim()
+            if (out.isBlank()) return null
+            // Keep it speakable: at most ~3 sentences.
+            val sentences = out.split(Regex("(?<=[.!?।])\\s+"))
+            return sentences.take(3).joinToString(" ").take(420)
+        } finally { busyFlag.set(false) }
+    }
+
     /** Step-by-step screen agent for unfamiliar screens: one action per call. */
     fun startAgent(goal: String, first: ScreenSnapshot?): AgentSession = object : AgentSession {
         private val done = ArrayList<String>()
