@@ -505,16 +505,16 @@ class Nexus(
     /** Re-teach (or teach) a skill for [trigger] from the app's Skills / Diagnostics screens. */
     fun teach(trigger: String) {
         teachTrigger = trigger
-        recording = mutableListOf(); recordingLastPkg = null
+        recording = mutableListOf(); _teachSteps.value = 0; recordingLastPkg = null
         emit(NexusEvent.TeachingChanged(true))
-        say("Show me \"$trigger\", $boss. Do it yourself, then tap Done.")
+        say("I'm watching, $boss. Do it yourself, then tap Done.")
     }
 
     /** Start recording the user's own taps for the stuck step. */
     fun stuckTeach() {
         val st = stuck ?: return
         teachTrigger = st.source
-        recording = mutableListOf(); recordingLastPkg = st.app
+        recording = mutableListOf(); _teachSteps.value = 0; recordingLastPkg = st.app
         emit(NexusEvent.TeachingChanged(true))
         say("Show me, $boss. Do this step yourself, then tap Done.")
     }
@@ -687,6 +687,19 @@ class Nexus(
     @Volatile private var recording: MutableList<ai.nexus.core.life.RecipeStep>? = null
     @Volatile private var recordingLastPkg: String? = null
     val isTeaching: Boolean get() = recording != null
+    private val _teachSteps = MutableStateFlow(0)
+    /** How many steps have been recorded so far while teaching. */
+    val teachSteps: StateFlow<Int> = _teachSteps
+    /** What the thing being taught is called (null until you name it). */
+    val teachingName: String? get() = teachTrigger
+
+    /** Throw away the recording in progress. */
+    fun cancelTeaching() {
+        if (recording == null) return
+        recording = null; teachTrigger = null; pendingRoutine = null; stuck = null; _teachSteps.value = 0
+        emit(NexusEvent.TeachingChanged(false))
+        say("Okay $boss, I've forgotten that.")
+    }
 
     /** Rich recording from the accessibility service: selectors for every tap and typed text. */
     fun recordStep(step: ai.nexus.core.life.RecipeStep) {
@@ -700,6 +713,7 @@ class Nexus(
             if (step.action == "scroll" && rec.lastOrNull()?.action == "scroll" && rec.last().direction == step.direction) return
             rec += step
             step.pkg?.let { recordingLastPkg = it }
+            _teachSteps.value = rec.size
         }
     }
 
@@ -718,6 +732,7 @@ class Nexus(
         synchronized(rec) {
             if (rec.lastOrNull()?.action != "open_app") rec += ai.nexus.core.life.RecipeStep("open_app", pkg, ai.nexus.core.life.Selector(text = appLabel))
             recordingLastPkg = pkg
+            _teachSteps.value = rec.size
         }
     }
 
@@ -957,14 +972,14 @@ class Nexus(
         Command.TeachStart -> {
             if (stuck != null) { stuckTeach(); Outcome.Success() } else {
                 if (teachTrigger == null) teachTrigger = lastMiss?.first
-                recording = mutableListOf(); recordingLastPkg = ops.screen()?.packageName
+                recording = mutableListOf(); _teachSteps.value = 0; recordingLastPkg = ops.screen()?.packageName
                 emit(NexusEvent.TeachingChanged(true))
                 Outcome.Success("I'm watching, $boss. Do the task yourself, then tap Done${if (teachTrigger == null) " and give it a name" else ""}.")
             }
         }
         is Command.TeachStop -> {
             val rec = recording?.toList()
-            recording = null
+            recording = null; _teachSteps.value = 0
             emit(NexusEvent.TeachingChanged(false))
             val trigger = teachTrigger
             when {

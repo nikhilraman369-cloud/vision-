@@ -131,6 +131,7 @@ class LifeReceiver : BroadcastReceiver() {
                 if (NotificationBrain.canSpeakNow(ctx, app, 2)) app.speakProactive(text)
                 ReminderScheduler.scheduleBriefs(ctx) // tomorrow
             }
+            ACTION_TEACH_CANCEL -> app.nexus.cancelTeaching()
             ACTION_RUN -> intent.getStringExtra("id")?.let { app.runScheduledAction(it) }
             ACTION_MODE -> {
                 val name = intent.getStringExtra("mode") ?: return
@@ -167,6 +168,7 @@ class LifeReceiver : BroadcastReceiver() {
         const val ACTION_BRIEF = "ai.nexus.BRIEF"
         const val ACTION_MODE = "ai.nexus.MODE"
         const val ACTION_RUN = "ai.nexus.RUN"
+        const val ACTION_TEACH_CANCEL = "ai.nexus.TEACH_CANCEL"
         const val ACTION_SEND_REPLY = "ai.nexus.SEND_REPLY"
         const val ACTION_DISMISS_REPLY = "ai.nexus.DISMISS_REPLY"
     }

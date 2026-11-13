@@ -8,6 +8,7 @@ import ai.nexus.core.life.LifeEngine
 import ai.nexus.core.life.LifeStore
 import ai.nexus.core.life.NotificationIntel
 import ai.nexus.core.life.RecipeStep
+import ai.nexus.core.life.pretty
 import ai.nexus.core.life.Selector
 import ai.nexus.core.life.SkillMatcher
 import ai.nexus.core.life.TaskItem
@@ -242,5 +243,24 @@ class V2Test {
         run(n, "hello")
         assertTrue(out.isNotEmpty(), "must reply")
         assertTrue(events.filterIsInstance<NexusEvent.Reply>().all { it.speak }, "replies must be marked to be spoken")
+    }
+
+    @Test fun namedTeachingSavesOnDoneAndCancelForgets() {
+        val (n, out, _) = setup(ScreenPhone())
+        n.teach("send good morning to Editorial Team")
+        assertTrue(n.isTeaching); assertEquals("send good morning to Editorial Team", n.teachingName)
+        n.recordStep(RecipeStep("open_app", "com.whatsapp", Selector(text = "WhatsApp")))
+        n.recordStep(RecipeStep("tap", "com.whatsapp", Selector(text = "Editorial Team")))
+        n.recordStep(RecipeStep("type", "com.whatsapp", text = "good morning"))
+        assertEquals(3, n.teachSteps.value)
+        n.finishTeaching()                       // no name prompt: it already has one
+        runBlocking { kotlinx.coroutines.delay(600) }
+        assertEquals(1, n.life!!.data.skills.size)
+        assertTrue(out.any { it.startsWith("Learned") }, out.toString())
+        assertTrue(n.life!!.data.skills[0].steps.map { it.pretty() }.any { it.contains("Editorial Team") })
+        // cancel throws the recording away
+        n.teach("something else"); n.recordStep(RecipeStep("tap", "x", Selector(text = "Y")))
+        n.cancelTeaching()
+        assertTrue(!n.isTeaching); assertEquals(0, n.teachSteps.value); assertEquals(1, n.life!!.data.skills.size)
     }
 }

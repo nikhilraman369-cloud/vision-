@@ -1,5 +1,11 @@
 # NEXUS v2 — Progress
 
+## 2.4.0 (versionCode 13): Teach ecosystem
+- **Teach screen** (home → 🎓 Teach, also Panel and the bubble's 🎓 chip): name the task in your own words, tap Start, do it once, tap Done. The name is the trigger phrase, so Done saves with no extra questions.
+- **Recording bar** (red, on screen): task name, live step count, Done ✓ and ✕. Also an ongoing notification with Done / Cancel if the bubble isn't shown. If a recording has no name (e.g. "watch me"), Done asks for one.
+- **Library:** every learned task with the phrases that trigger it, a plain-words step list, success rate and last use. Run, Rename, Phrases, Steps, Re-teach, Turn off, Undo last teach, Delete.
+- **Screen recordings (video files) are not supported:** a video can't be turned into reliable taps offline. Live recording is the supported way; the Teach screen says so.
+
 ## 2.3.0 (versionCode 10): voice sequence + volume-key fix
 - **Volume bar:** the volume-up + down shortcut no longer touches the volume at all (the first key is held back ~0.2 s; if the second joins, it's the shortcut; otherwise the press is replayed as a normal volume change). Left alone during calls and in camera apps.
 - **Speaking can no longer fail silently:** if the downloaded voice makes no sound, NEXUS uses the phone's voice for that sentence; the phone voice picks a language it really has, has a stuck-flag fix and a 5 s watchdog; any problem is shown in the chat and in Panel → Voice → "Test voice" (which also warns when a Bluetooth device is taking the sound).

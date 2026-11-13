@@ -11,8 +11,8 @@ android {
         applicationId = "ai.nexus.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 12
-        versionName = "2.3.2"
+        versionCode = 13
+        versionName = "2.4.0"
         // The on-device brain ships native code; arm64 covers every modern phone and keeps the APK small.
         ndk { abiFilters += setOf("arm64-v8a") }
     }

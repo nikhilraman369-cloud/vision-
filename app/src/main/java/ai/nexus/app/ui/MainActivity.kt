@@ -75,8 +75,9 @@ class MainActivity : AppCompatActivity() {
             bubbleBtn.postDelayed({ refreshBubbleBtn() }, 300)
         }
         nav.addView(bubbleBtn, LinearLayout.LayoutParams(0, -2, 1f))
-        nav.addView(navBtn("Panel", Ui.ACCENT) { startActivity(Intent(this, PanelActivity::class.java)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-        nav.addView(navBtn("Commands", Ui.CARD) { startActivity(Intent(this, HelpActivity::class.java)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        nav.addView(navBtn("🎓 Teach", Ui.ACCENT) { startActivity(Intent(this, TeachActivity::class.java)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
+        nav.addView(navBtn("Panel", Ui.CARD) { startActivity(Intent(this, PanelActivity::class.java)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
+        nav.addView(navBtn("Help", Ui.CARD) { startActivity(Intent(this, HelpActivity::class.java)) }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(6) })
         root.addView(nav, Ui.matchWrap())
 
         setupBox = vbox(12)

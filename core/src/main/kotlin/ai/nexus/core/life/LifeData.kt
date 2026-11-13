@@ -79,6 +79,17 @@ data class Skill(
     val successRate: Int get() = if (successes + failures == 0) 100 else successes * 100 / (successes + failures)
 }
 
+/** A step in plain words, for the "what did I teach it" screens. */
+fun RecipeStep.pretty(): String = when (action) {
+    "open_app" -> "Open " + (selector?.text ?: pkg?.substringAfterLast('.') ?: "the app")
+    "tap" -> "Tap \u201c" + (selector?.text ?: selector?.desc ?: selector?.viewId?.substringAfterLast('/') ?: "button") + "\u201d"
+    "long_press" -> "Press and hold \u201c" + (selector?.text ?: selector?.desc ?: "item") + "\u201d"
+    "type" -> "Type \u201c" + (text ?: "") + "\u201d"
+    "scroll" -> "Scroll " + (direction ?: "down")
+    "back" -> "Go back"
+    else -> action
+}
+
 @Serializable
 data class Mode(
     val id: String = newId(),

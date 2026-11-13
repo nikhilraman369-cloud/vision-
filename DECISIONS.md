@@ -28,3 +28,5 @@ Choices made without asking, as the build prompt asked. Each one can be changed 
 | 22 | Trailing "… in 10 minutes" is treated as message text, not a delay, for messages | "Tell Rahul I'll be there in 10 minutes" must send now | Say "after 10 minutes, message …" to delay |
 | 23 | Volume combo: hold back the first key 220 ms, replay it as a normal volume change if the other key doesn't join | Passing the first key through made the volume bar appear on every shortcut | Settings → Listening |
 | 24 | If the neural voice produces no sound, fall back to the system voice automatically and say so in the chat | Silent failures were invisible | Panel → Voice → Test voice |
+| 25 | Teaching = live recording only; shared screen-recording videos are not imported | Selectors (ids/text) need the accessibility tree; video would need an on-device vision model | Teach screen explains |
+| 26 | The skill's name is also its first trigger phrase | One field, no second "name it" step | Teach → Phrases |

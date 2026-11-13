@@ -30,6 +30,7 @@ import android.widget.TextView
 import ai.nexus.app.NexusApp
 import ai.nexus.app.ui.MainActivity
 import ai.nexus.app.ui.PanelActivity
+import ai.nexus.app.ui.TeachActivity
 import ai.nexus.app.voice.NexusVoiceService
 import ai.nexus.app.voice.VoiceState
 import ai.nexus.core.agent.AgentState
@@ -93,6 +94,7 @@ class OverlayService : Service() {
         scope.launch { app.chat.collect { if (card != null && cardMode == "main") renderCard() } }
         scope.launch { app.voice.partial.collect { if (card != null && cardMode == "main") renderCard() } }
         scope.launch { app.stuck.collect { st -> if (st != null) { cardMode = "stuck"; showCard(autoCollapse = false) } else if (cardMode == "stuck") hideCard() } }
+        scope.launch { app.nexus.teachSteps.collect { updateTeachLabel() } }
         scope.launch { app.teaching.collect { t -> if (t) showDoneTeaching() else hideDoneTeaching(); renderBubble(app.voice.state.value, app.nexus.state.value) } }
     }
 
@@ -364,6 +366,7 @@ class OverlayService : Service() {
                 chip(row, "🎤 Mic", 0xFF6C5CE7.toInt()) { app.talk() }
                 chip(row, "✎ Note") { app.talkWithPrefix("note: ") }
                 chip(row, "◐ Mode") { cardMode = "modes"; renderCard() }
+                chip(row, "🎓 Teach") { startActivity(Intent(this, TeachActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); hideCard() }
                 chip(row, "☑ Tasks") { startActivity(Intent(this, PanelActivity::class.java).putExtra("section", "tasks").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); hideCard() }
                 chip(row, "■ Stop", 0xFF8A2E2E.toInt()) { app.voice.shutUp(); app.ask("stop") }
                 c.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) })
@@ -401,19 +404,38 @@ class OverlayService : Service() {
 
     // ---------------------------------------------------------------- teaching
 
-    private fun showDoneTeaching() {
-        if (doneTeach != null) return
-        val v = TextView(this).apply {
-            text = "●  Teaching… tap Done when finished"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
-            setPadding((18 * dp).toInt(), (12 * dp).toInt(), (18 * dp).toInt(), (12 * dp).toInt())
-            background = GradientDrawable().apply { cornerRadius = 26 * dp; setColor(0xF0D63031.toInt()) }
-            setOnClickListener { text = "Saving…"; app.nexus.finishTeaching() }
-        }
-        val lp = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = (36 * dp).toInt() }
-        runCatching { wm.addView(v, lp) }; doneTeach = v
+    private var teachLabel: TextView? = null
+
+    private fun updateTeachLabel() {
+        val n = app.nexus.teachSteps.value
+        teachLabel?.text = "●  " + (app.nexus.teachingName?.take(24) ?: "Teaching") + "  ·  $n step" + (if (n == 1) "" else "s")
     }
 
-    private fun hideDoneTeaching() { doneTeach?.let { runCatching { wm.removeView(it) } }; doneTeach = null }
+    /** Red recording bar: what's being taught, how many steps so far, and Done / Cancel. */
+    private fun showDoneTeaching() {
+        if (doneTeach != null) return
+        fun pill(t: String, color: Int, onClick: () -> Unit) = TextView(this).apply {
+            text = t; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            setPadding((14 * dp).toInt(), (8 * dp).toInt(), (14 * dp).toInt(), (8 * dp).toInt())
+            background = GradientDrawable().apply { cornerRadius = 18 * dp; setColor(color) }
+            setOnClickListener { onClick() }
+        }
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding((14 * dp).toInt(), (8 * dp).toInt(), (8 * dp).toInt(), (8 * dp).toInt())
+            background = GradientDrawable().apply { cornerRadius = 28 * dp; setColor(0xF0D63031.toInt()) }
+        }
+        val label = TextView(this).apply { textSize = 13.5f; setTextColor(Color.WHITE); typeface = android.graphics.Typeface.DEFAULT_BOLD }
+        teachLabel = label
+        bar.addView(label, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = (10 * dp).toInt() })
+        bar.addView(pill("Done ✓", 0xFF00B894.toInt()) { app.finishTeachingUi(this) }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = (6 * dp).toInt() })
+        bar.addView(pill("✕", 0x66000000) { app.nexus.cancelTeaching() })
+        val lp = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = (36 * dp).toInt() }
+        runCatching { wm.addView(bar, lp) }; doneTeach = bar
+        updateTeachLabel()
+    }
+
+    private fun hideDoneTeaching() { doneTeach?.let { runCatching { wm.removeView(it) } }; doneTeach = null; teachLabel = null }
 
     companion object {
         @Volatile var running = false

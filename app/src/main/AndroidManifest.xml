@@ -101,6 +101,7 @@
         <activity android:name=".ui.MemoryActivity" android:exported="false" android:label="NEXUS memory" />
         <activity android:name=".ui.RoutinesActivity" android:exported="false" android:label="Routines" />
         <activity android:name=".ui.HelpActivity" android:exported="false" android:label="What can I say?" />
+        <activity android:name=".ui.TeachActivity" android:exported="false" android:label="Teach NEXUS" android:launchMode="singleTop" />
         <activity android:name=".ui.PanelActivity" android:exported="false" android:label="NEXUS control panel" />
 
         <receiver android:name=".life.LifeReceiver" android:exported="false">

@@ -2,6 +2,7 @@ package ai.nexus.app
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import ai.nexus.app.brain.PhoneBrainManager
 import ai.nexus.app.device.AndroidDevice
 import ai.nexus.app.service.OverlayService
@@ -142,7 +143,7 @@ class NexusApp : Application() {
                     is NexusEvent.Error -> { add(ChatLine(false, "⚠ ${e.message}", detail = true)); voice.commandFinished() }
                     is NexusEvent.Ack -> { if (e.text.isNotBlank()) add(ChatLine(false, e.text)); haptics.success(); if (memory.settings.earcons) sounds.success(); voice.tick() }
                     NexusEvent.HideBubble -> OverlayService.stop(this@NexusApp)
-                    is NexusEvent.TeachingChanged -> { _teaching.value = e.active; if (!e.active) _stuck.value = null }
+                    is NexusEvent.TeachingChanged -> { _teaching.value = e.active; if (!e.active) _stuck.value = null; teachNotification(e.active) }
                     is NexusEvent.Stuck -> { _stuck.value = e; haptics.error(); if (memory.settings.earcons) sounds.error() }
                     is NexusEvent.ModeChanged -> _mode.value = e.mode
                     is NexusEvent.VoiceMuted -> { voice.muted = e.muted; if (e.muted) voice.shutUp() }
@@ -205,6 +206,28 @@ class NexusApp : Application() {
     }
 
     fun clearStuck() { _stuck.value = null }
+
+    /** "Done" while teaching: save now if it has a name, else ask for one. */
+    fun finishTeachingUi(ctx: Context) {
+        if (nexus.teachingName != null) nexus.finishTeaching()
+        else ctx.startActivity(Intent(ctx, ai.nexus.app.ui.TeachActivity::class.java).putExtra("finish", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+    }
+
+    /** An ongoing notification with Done / Cancel while teaching: works even if the bubble isn't shown. */
+    private fun teachNotification(active: Boolean) {
+        val nm = getSystemService(android.app.NotificationManager::class.java) ?: return
+        if (!active) { nm.cancel(TEACH_NOTIF); return }
+        nm.createNotificationChannel(android.app.NotificationChannel("nexus_teach", "NEXUS teaching", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+        val done = android.app.PendingIntent.getActivity(this, 31, Intent(this, ai.nexus.app.ui.TeachActivity::class.java).putExtra("finish", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val cancel = android.app.PendingIntent.getBroadcast(this, 32, Intent(this, ai.nexus.app.life.LifeReceiver::class.java).setAction(ai.nexus.app.life.LifeReceiver.ACTION_TEACH_CANCEL),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        nm.notify(TEACH_NOTIF, android.app.Notification.Builder(this, "nexus_teach").setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle("● NEXUS is watching").setContentText("Do the task yourself, then tap Done.")
+            .addAction(android.app.Notification.Action.Builder(null, "Done ✓", done).build())
+            .addAction(android.app.Notification.Action.Builder(null, "Cancel", cancel).build())
+            .setOngoing(true).build())
+    }
 
     /** A scheduled action is due. Behind a PIN lock it waits for you to unlock (via a notification). */
     fun runScheduledAction(id: String, force: Boolean = false) {
@@ -341,6 +364,7 @@ class NexusApp : Application() {
     fun onAccessibilityConnected() { scope.launch { nexus.apps.refresh() } }
 
     companion object {
+        private const val TEACH_NOTIF = 4242
         fun get(c: Context) = c.applicationContext as NexusApp
     }
 }
