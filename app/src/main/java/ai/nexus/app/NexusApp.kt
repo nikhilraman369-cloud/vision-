@@ -219,10 +219,32 @@ class NexusApp : Application() {
     }
 
     /** Load the chosen neural voice pack if it's downloaded. */
-    fun loadVoice() {
+    private val _voiceStatus = MutableStateFlow("")
+    /** One line about the butler voice: not downloaded / loading / ready / why it failed. */
+    val voiceStatus: StateFlow<String> = _voiceStatus
+
+    /**
+     * Load the neural voice. If the selected pack isn't downloaded but another one is, switch to that
+     * one (otherwise nothing would ever load). [onResult] is called with true when it's ready to speak.
+     */
+    fun loadVoice(onResult: (Boolean) -> Unit = {}) {
         val s = memory.settings
         voice.useNeural = s.voiceEngine == "neural"
-        if (s.voiceEngine == "neural" && voicePacks.installed(s.voicePack)) cinematic.load(s.voicePack) { ok -> if (!ok) voice.useNeural = false }
+        if (s.voiceEngine != "neural") { _voiceStatus.value = "Using the phone's own voice."; onResult(false); return }
+        var id = s.voicePack
+        if (!voicePacks.installed(id)) {
+            val other = ai.nexus.app.voice.VoicePackManager.PACKS.firstOrNull { voicePacks.installed(it.id) }
+            if (other == null) { _voiceStatus.value = "No voice downloaded yet, so the phone's own voice is speaking. Download a pack below."; voice.useNeural = false; onResult(false); return }
+            id = other.id
+            memory.updateSettings { it.copy(voicePack = id) }
+        }
+        val title = voicePacks.pack(id)?.title ?: id
+        _voiceStatus.value = "Loading $title… (a few seconds)"
+        cinematic.load(id) { ok ->
+            if (!ok) voice.useNeural = false
+            _voiceStatus.value = if (ok) "✅ Butler voice ready: $title" else "⚠ The downloaded voice couldn't start: ${cinematic.lastError ?: "unknown reason"}. Using the phone's voice."
+            onResult(ok)
+        }
     }
 
     /** Contacts, apps and remembered people feed the speech corrector. */

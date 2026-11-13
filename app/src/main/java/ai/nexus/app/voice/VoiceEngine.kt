@@ -268,7 +268,7 @@ class VoiceEngine(
     /** For the "Test voice" button: speaks and reports what happened. */
     fun diagnose(): String = buildString {
         append(if (muted) "Voice is muted. " else "")
-        append(if (useNeural && cinematic?.ready == true) "Neural voice: loaded. " else "Neural voice: not in use. ")
+        append(if (useNeural && cinematic?.ready == true) "Neural voice: loaded. " else "Neural voice: not in use" + (cinematic?.lastError?.let { " ($it)" } ?: "") + ". ")
         append(if (ttsReady) "Phone voice: ready. " else "Phone voice: NOT ready. ")
         _issue.value?.let { append("Last problem: $it. ") }
         bluetoothHint()?.let { append(it) }

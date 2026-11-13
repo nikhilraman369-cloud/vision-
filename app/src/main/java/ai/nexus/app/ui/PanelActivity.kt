@@ -61,7 +61,10 @@ class PanelActivity : AppCompatActivity() {
         section = intent.getStringExtra("section") ?: "panel"
         box = vbox(16).apply { setBackgroundColor(Ui.BG) }
         setContentView(ScrollView(this).apply { fitsSystemWindows = true; setBackgroundColor(Ui.BG); addView(box) })
-        if (section == "voice") lifecycleScope.launch { app.voicePacks.state.collect { refresh() } }
+        if (section == "voice") {
+            lifecycleScope.launch { app.voicePacks.state.collect { refresh() } }
+            lifecycleScope.launch { app.voiceStatus.collect { refresh() } }
+        }
     }
 
     override fun onResume() { super.onResume(); refresh() }
@@ -295,14 +298,19 @@ class PanelActivity : AppCompatActivity() {
 
     private fun voice() {
         title("Voice", "All voices run offline on your phone. Download a pack once, then tap any voice in it to use it.")
+        app.voiceStatus.value.takeIf { it.isNotBlank() }?.let { note(it) }
         app.voice.bluetoothHint()?.let { note("🎧 $it") }
         card {
             addView(label("Can you hear me?", 15.5f, bold = true))
             addView(label("Plays a sentence, then tells you what worked and what didn't.", 12f, Ui.MUTED))
             actions("▶ Test voice" to {
-                app.loadVoice()
-                window.decorView.postDelayed({ app.voice.speak("Good evening, ${s.addressAs}. If you can hear this, my voice is working.") }, 900)
-                window.decorView.postDelayed({ android.app.AlertDialog.Builder(this@PanelActivity).setTitle("Voice check").setMessage(app.voice.diagnose()).setPositiveButton("OK", null).show() }, 7000)
+                // Wait until the voice has finished loading, then speak, then report.
+                app.loadVoice { _ ->
+                    runOnUiThread {
+                        app.voice.speak("Good evening, ${s.addressAs}. If you can hear this, my voice is working.")
+                        window.decorView.postDelayed({ android.app.AlertDialog.Builder(this@PanelActivity).setTitle("Voice check").setMessage(app.voiceStatus.value + "\n\n" + app.voice.diagnose()).setPositiveButton("OK", null).show() }, 6000)
+                    }
+                }
             })
         }
         spinner("Voice engine", listOf("neural" to "Neural voices (best)", "system" to "Phone's own voice (no download)"), s.voiceEngine) { v -> update { it.copy(voiceEngine = v) }; app.loadVoice(); refresh() }

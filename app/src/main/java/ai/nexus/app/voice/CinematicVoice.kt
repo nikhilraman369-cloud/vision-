@@ -56,6 +56,7 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
             speaker = p0.speaker; loadedId = id; synchronized(cache) { cache.clear() }; onLoaded(true); return
         }
         loader.execute {
+            lastError = null
             val ok = runCatching {
                 val p = packs.pack(id) ?: error("Unknown voice pack")
                 val dir = packs.dir(id)
@@ -74,7 +75,7 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
                 tts = engine; loadedId = id; speaker = p.speaker
                 synchronized(cache) { cache.clear() }
                 true
-            }.getOrElse { e -> lastError = e.message; tts = null; loadedId = null; false }
+            }.getOrElse { e -> lastError = (e.message ?: e.javaClass.simpleName); tts = null; loadedId = null; false }
             onLoaded(ok)
         }
     }
