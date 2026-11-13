@@ -68,7 +68,10 @@ class NexusApp : Application() {
         nexus = Nexus(device, systemActions, memory, brain = buildBrain(), scope = scope, life = life)
         voice = VoiceEngine(this, chooseBest = ::bestGuess) { text -> ask(text) }
         voice.init()
+        voice.agentBusy = { nexus.state.value == AgentState.THINKING || nexus.state.value == AgentState.EXECUTING }
+        voice.agentWaiting = { nexus.state.value == AgentState.WAITING_FOR_USER }
         migrateTo21()
+        migrateTo23()
         applySettings()
 
         // Free on-device brain: load it in the background if it has been downloaded.
@@ -102,6 +105,17 @@ class NexusApp : Application() {
         nexus.onUnschedule = { id -> runCatching { ai.nexus.app.life.ReminderScheduler.cancelAction(this@NexusApp, id) } }
         runCatching { ai.nexus.app.life.ReminderScheduler.scheduleAll(this@NexusApp) }
 
+        // If speaking ever fails, say so in the chat (once per reason) instead of staying silent.
+        scope.launch {
+            var lastShown: String? = null
+            voice.issue.collect { why ->
+                if (why != null && why != lastShown) {
+                    lastShown = why
+                    add(ChatLine(false, "⚠ I couldn't speak out loud: $why." + (voice.bluetoothHint()?.let { " $it" } ?: "") + " Open Panel → Voice → Test voice to check.", detail = true))
+                } else if (why == null) lastShown = null
+            }
+        }
+
         scope.launch {
             nexus.events.collect { e ->
                 when (e) {
@@ -126,7 +140,7 @@ class NexusApp : Application() {
                         AgentState.WAITING_FOR_USER -> "Waiting for you"
                     }
                     is NexusEvent.Error -> { add(ChatLine(false, "⚠ ${e.message}", detail = true)); voice.commandFinished() }
-                    is NexusEvent.Ack -> { add(ChatLine(false, e.text.ifBlank { "✓ Done" })); haptics.success(); if (memory.settings.earcons) sounds.success(); voice.tick() }
+                    is NexusEvent.Ack -> { if (e.text.isNotBlank()) add(ChatLine(false, e.text)); haptics.success(); if (memory.settings.earcons) sounds.success(); voice.tick() }
                     NexusEvent.HideBubble -> OverlayService.stop(this@NexusApp)
                     is NexusEvent.TeachingChanged -> { _teaching.value = e.active; if (!e.active) _stuck.value = null }
                     is NexusEvent.Stuck -> { _stuck.value = e; haptics.error(); if (memory.settings.earcons) sounds.error() }
@@ -278,6 +292,14 @@ class NexusApp : Application() {
         memory.updateSettings { it.copy(handsFree = false, continuousListening = false, wakeWordEnabled = false, followUpSeconds = 6,
             speakResponses = true, accurateListening = true, usePhoneBrain = true, volumeKeys = true) }
         prefs.edit().putBoolean("migrated21", true).apply()
+    }
+
+    /** 2.3: NEXUS talks through every task ("On it" → result). Make sure speech is on and never "quiet". */
+    private fun migrateTo23() {
+        val prefs = getSharedPreferences("nexus", MODE_PRIVATE)
+        if (prefs.getBoolean("migrated23", false)) return
+        memory.updateSettings { it.copy(quietAcks = false, spokenAcks = true, speakResponses = true, voiceMuted = false) }
+        prefs.edit().putBoolean("migrated23", true).apply()
     }
 
     fun applySettings() {

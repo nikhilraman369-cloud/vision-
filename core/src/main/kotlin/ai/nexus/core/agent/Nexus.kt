@@ -124,6 +124,14 @@ class Nexus(
         }
         val parsed = parser.parse(text)
 
+        // Stuck and waiting: whatever you say next (that isn't stop/cancel) is the instruction for the stuck step.
+        if (stuck != null && !parsed.isControl) {
+            ctx.addTurn("user", text)
+            emit(NexusEvent.TeachingChanged(false)) // clears the stuck card
+            stuckInstruction(text)
+            return
+        }
+
         // Stop / wait / continue must work while a task is running.
         if (parsed.isControl) {
             handleControl((parsed.steps[0].command as Command.ControlTask).control)
@@ -249,7 +257,7 @@ class Nexus(
                 return@withLock
             }
             ctx.lastUtterance = text
-            if (memory.settings.spokenAcks && (request.steps.size > 1 || request.steps.any { slow(it.command) })) say("On it, $boss.")
+            if (memory.settings.spokenAcks && (request.steps.size > 1 || request.steps.any { slow(it.command) })) say(opener())
             val finalSteps = request.steps
             val missed = lastMiss?.takeIf { (_, at) -> System.currentTimeMillis() - at < 15_000 }?.first
             runJob {
@@ -287,7 +295,8 @@ class Nexus(
     private suspend fun handleControl(c: Control) {
         when (c) {
             Control.STOP, Control.CANCEL -> {
-                val wasRunning = job?.isActive == true || loopJob?.isActive == true
+                val wasRunning = job?.isActive == true || loopJob?.isActive == true || stuck != null
+                if (stuck != null) { stuck = null; emit(NexusEvent.TeachingChanged(false)) }
                 job?.cancel(); stopLoop(); paused.value = false; ctx.pendingChoice = null
                 setState(AgentState.IDLE)
                 say(if (wasRunning) "Stopped." else "Okay.")
@@ -410,7 +419,7 @@ class Nexus(
                 interruptedSteps = emptyList()
                 emit(NexusEvent.Stuck(desc, appName, step.source))
                 setState(AgentState.WAITING_FOR_USER)
-                say("$boss, I'm stuck at \"$desc\" in $appName. Say \"teach me\" and show me once, or \"skip\".")
+                say("$boss, I'm stuck at \"$desc\" in $appName. Tell me what to do: say the step in words, say \"teach me\" and show me once, or say \"skip\".")
                 return false
             }
             ctx.lastCommand = cmd
@@ -446,16 +455,24 @@ class Nexus(
         ctx.lastRequestCommands = steps.map { it.command }
         when {
             notes.isNotEmpty() -> say(if (total > 1) "Done, with a note: " + notes.joinToString(" ") else notes.joinToString(" "))
-            total > 1 -> acknowledge("Done, $boss.")
-            else -> if (needsAck(steps[0].command)) acknowledge(ack(steps[0].command)) else if (!saidSomething) emit(NexusEvent.Ack(""))
+            total > 1 -> acknowledge("All done, $boss.")
+            else -> {
+                val only = steps[0].command
+                if (needsAck(only)) acknowledge(ack(only))
+                else if (slow(only) && !saidSomething) acknowledge("Done, $boss.")
+                else if (!saidSomething) emit(NexusEvent.Ack(""))
+            }
         }
         return notes.isEmpty()
     }
 
-    /** Short confirmations: always a tick/vibration; spoken too unless you chose silent confirmations. */
+    private var openerIdx = 0
+    /** What NEXUS says the moment it starts a task. */
+    private fun opener() = listOf("On it, $boss.", "Right away, $boss.", "On it, $boss.", "Certainly, $boss.")[openerIdx++ % 4]
+
+    /** Result of a task: always a tick/vibration, and spoken ("Opened YouTube.", "All done, Boss.") unless confirmations are off. */
     private fun acknowledge(text: String) {
-        if (memory.settings.spokenAcks && !memory.settings.quietAcks) { say(text); emit(NexusEvent.Ack("")) }
-        else if (memory.settings.spokenAcks) { ctx.addTurn("assistant", text); emit(NexusEvent.Ack(text)); emit(NexusEvent.Reply(text, memory.settings.speakResponses)) }
+        if (memory.settings.spokenAcks) { say(text); emit(NexusEvent.Ack("")) }
         else { ctx.addTurn("assistant", text); emit(NexusEvent.Ack(text)) }
     }
 
@@ -510,7 +527,8 @@ class Nexus(
             val steps = parser.parse(text).steps
             val ok = runSteps(steps)
             if (ok && steps.all { CommandDsl.toLine(it.command) != null }) memory.remember(MemoryKind.LEARNED, Fuzzy.normalize(st.source), CommandDsl.toLines(steps.map { it.command }))
-            if (ok && st.rest.isNotEmpty()) runSteps(st.rest)
+            // A brand-new "open <app>" means you've moved on: don't carry on with the old plan.
+            if (ok && st.rest.isNotEmpty() && steps.firstOrNull()?.command !is Command.OpenApp) runSteps(st.rest)
         }
     }
 
@@ -521,7 +539,7 @@ class Nexus(
 
     private suspend fun runSkill(hit: ai.nexus.core.life.SkillMatcher.Hit, text: String) {
         setState(AgentState.EXECUTING)
-        if (memory.settings.spokenAcks && hit.skill.steps.size > 1) say("On it, $boss.")
+        if (memory.settings.spokenAcks && hit.skill.steps.size > 1) say(opener())
         val o = executeSkill(hit)
         logStep(text, "Skill: ${hit.skill.name}", o, 0)
         when (o) {
@@ -1671,8 +1689,8 @@ class Nexus(
     private fun needsAck(c: Command) = c is Command.OpenApp || c is Command.SetToggle || c is Command.SetLevel || c is Command.Call ||
         c is Command.React || c is Command.SendMessage || c is Command.Media || c is Command.PlayMedia || c is Command.Navigate && c.action == GlobalAction.SCREENSHOT
 
-    private fun ack(c: Command): String = when (c) {
-        is Command.OpenApp -> "Opened ${c.app.takeUnless { it == IntentParser.PREVIOUS_APP } ?: "it"}."
+    private suspend fun ack(c: Command): String = when (c) {
+        is Command.OpenApp -> "Opened ${c.app.takeUnless { it == IntentParser.PREVIOUS_APP }?.let { name -> apps.resolve(name)?.label ?: name } ?: "it"}."
         is Command.React -> when (c.reaction) {
             Reaction.LIKE -> if (c.on) "Liked." else "Removed the like."
             Reaction.SAVE -> if (c.on) "Saved." else "Removed from saved."

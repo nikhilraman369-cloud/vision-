@@ -26,3 +26,5 @@ Choices made without asking, as the build prompt asked. Each one can be changed 
 | 20 | Streaming answers via MediaPipe's async API looked up by reflection, falling back to one-shot generation | Speech starts after the first sentence; reflection means an API difference can't break the build | — |
 | 21 | Scheduled messages run without a second "Send?" confirmation; behind a PIN lock, a notification asks you to unlock first | You confirmed when you scheduled it; NEXUS can't operate apps behind a secure lock | — |
 | 22 | Trailing "… in 10 minutes" is treated as message text, not a delay, for messages | "Tell Rahul I'll be there in 10 minutes" must send now | Say "after 10 minutes, message …" to delay |
+| 23 | Volume combo: hold back the first key 220 ms, replay it as a normal volume change if the other key doesn't join | Passing the first key through made the volume bar appear on every shortcut | Settings → Listening |
+| 24 | If the neural voice produces no sound, fall back to the system voice automatically and say so in the chat | Silent failures were invisible | Panel → Voice → Test voice |

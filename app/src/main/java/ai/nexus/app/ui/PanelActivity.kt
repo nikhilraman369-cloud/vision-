@@ -295,6 +295,16 @@ class PanelActivity : AppCompatActivity() {
 
     private fun voice() {
         title("Voice", "All voices run offline on your phone. Download a pack once, then tap any voice in it to use it.")
+        app.voice.bluetoothHint()?.let { note("🎧 $it") }
+        card {
+            addView(label("Can you hear me?", 15.5f, bold = true))
+            addView(label("Plays a sentence, then tells you what worked and what didn't.", 12f, Ui.MUTED))
+            actions("▶ Test voice" to {
+                app.loadVoice()
+                window.decorView.postDelayed({ app.voice.speak("Good evening, ${s.addressAs}. If you can hear this, my voice is working.") }, 900)
+                window.decorView.postDelayed({ android.app.AlertDialog.Builder(this@PanelActivity).setTitle("Voice check").setMessage(app.voice.diagnose()).setPositiveButton("OK", null).show() }, 7000)
+            })
+        }
         spinner("Voice engine", listOf("neural" to "Neural voices (best)", "system" to "Phone's own voice (no download)"), s.voiceEngine) { v -> update { it.copy(voiceEngine = v) }; app.loadVoice(); refresh() }
         val st = app.voicePacks.state.value
         if (st is VoicePackManager.State.Downloading) note("Downloading… ${st.percent}%")

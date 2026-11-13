@@ -225,4 +225,22 @@ class V2Test {
         run(n, "cancel the scheduled message to rahul")
         assertTrue(n.life!!.data.scheduled.isEmpty())
     }
+
+    @Test fun taskIsAnnouncedStartToFinish() {
+        val (n, out, _) = setup(ScreenPhone())
+        run(n, "open YouTube")
+        assertTrue(out.first().startsWith("On it") || out.first().startsWith("Right away") || out.first().startsWith("Certainly"), out.toString())
+        assertTrue(out.last().startsWith("Opened"), out.toString())
+        out.clear()
+        run(n, "turn on the torch and set volume to 40")
+        assertTrue(out.first().contains("Boss"), out.toString())
+        assertTrue(out.last().startsWith("All done"), out.toString())
+    }
+
+    @Test fun greetingsAreAnsweredOutLoud() {
+        val (n, out, events) = setup(ScreenPhone())
+        run(n, "hello")
+        assertTrue(out.isNotEmpty(), "must reply")
+        assertTrue(events.filterIsInstance<NexusEvent.Reply>().all { it.speak }, "replies must be marked to be spoken")
+    }
 }

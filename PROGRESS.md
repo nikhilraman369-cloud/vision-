@@ -1,5 +1,12 @@
 # NEXUS v2 — Progress
 
+## 2.3.0 (versionCode 10): voice sequence + volume-key fix
+- **Volume bar:** the volume-up + down shortcut no longer touches the volume at all (the first key is held back ~0.2 s; if the second joins, it's the shortcut; otherwise the press is replayed as a normal volume change). Left alone during calls and in camera apps.
+- **Speaking can no longer fail silently:** if the downloaded voice makes no sound, NEXUS uses the phone's voice for that sentence; the phone voice picks a language it really has, has a stuck-flag fix and a 5 s watchdog; any problem is shown in the chat and in Panel → Voice → "Test voice" (which also warns when a Bluetooth device is taking the sound).
+- **Spoken sequence:** "On it, Boss." → task → result ("Opened YouTube.", "Done, Boss.", or for chains "All done, Boss."). Quiet-confirmations mode removed; speech forced on once for this update.
+- **Stuck:** "Boss, I'm stuck at … Tell me what to do": whatever you say next is taken as the instruction (or "teach me" / "skip" / "cancel").
+- **Listening:** the follow-up window now opens only after NEXUS has finished both talking and working (10 s when it's waiting for your answer).
+
 ## 2.2.0 (versionCode 9): speed + open-ended commands
 - **Brain streams:** answers are spoken sentence by sentence as the on-device model writes them (MediaPipe async API, found at runtime with a fallback). Generation stops after 3 sentences. The prompt is shorter (faster to read), and a soft "thinking" tone plays instantly.
 - **Keep going:** "keep scrolling up/down", "scroll down slowly" (gentle reading-speed swipes), "faster", "slower", "pause", "continue", "stop". It stops by itself at the end of a page. On Reels/Shorts it moves to the next video every few seconds instead.

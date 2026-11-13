@@ -69,13 +69,26 @@ class VoiceEngine(
     /** Compatibility no-op (the follow-up window is opened after each reply). */
     fun extendConversation() {}
 
+    // ---- what the engine needs to know about the rest of NEXUS
+    /** True while NEXUS is thinking or working (so we don't start listening mid-task). */
+    @Volatile var agentBusy: () -> Boolean = { false }
+    /** True while NEXUS has asked you something and waits for your answer (we listen longer). */
+    @Volatile var agentWaiting: () -> Boolean = { false }
+
+    // ---- problems with speaking, shown to the user instead of failing silently
+    private val _issue = MutableStateFlow<String?>(null)
+    val issue: StateFlow<String?> = _issue
+    private fun fail(why: String) { _issue.value = why }
+
     fun init() {
         tts = TextToSpeech(context) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
+            if (!ttsReady) fail("the phone's speech engine didn't start (Settings → Text-to-speech output)")
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) { main.post { _state.value = VoiceState.SPEAKING; pauseRecognizer() } }
-                override fun onDone(id: String?) { main.post { if (tts?.isSpeaking != true) systemSpeaking = false; afterSpeaking() } }
-                @Deprecated("Deprecated in Java") override fun onError(id: String?) { main.post { systemSpeaking = false; afterSpeaking() } }
+                override fun onStart(id: String?) { main.post { id?.let { sysStarted += it }; _issue.value = null; sysFailures = 0; _state.value = VoiceState.SPEAKING; pauseRecognizer() } }
+                override fun onDone(id: String?) { main.post { sysFinished(id) } }
+                @Deprecated("Deprecated in Java") override fun onError(id: String?) { main.post { fail("the phone's speech engine reported an error"); sysFinished(id) } }
+                override fun onError(id: String?, errorCode: Int) { main.post { fail("the phone's speech engine failed (code $errorCode)"); sysFinished(id) } }
             })
         }
     }
@@ -84,7 +97,7 @@ class VoiceEngine(
 
     /** Activate: interrupt any speech and listen for a command. */
     fun startListening() = main.post {
-        if (isSpeaking) { neuralQueue.clear(); cinematic?.stop(); tts?.stop(); systemSpeaking = false; neuralBusy = false }
+        if (isSpeaking) silence()
         conversation = true
         openWindow(firstWindowMs)
     }
@@ -96,7 +109,14 @@ class VoiceEngine(
     fun toggle() { if (listening) stopListening() else startListening() }
 
     /** Stop talking immediately (voice interruption from the bubble or "stop"). */
-    fun shutUp() = main.post { neuralQueue.clear(); cinematic?.stop(); tts?.stop(); systemSpeaking = false; neuralBusy = false; afterSpeaking() }
+    fun shutUp() = main.post { silence(); afterSpeaking() }
+
+    /** Cut off all speech and forget anything waiting to be said. */
+    private fun silence() {
+        neuralToken++
+        neuralQueue.clear(); cinematic?.stop(); tts?.stop()
+        sysOpen.clear(); sysStarted.clear(); systemSpeaking = false; neuralBusy = false
+    }
 
     private fun openWindow(ms: Long) {
         awaitingReply = false
@@ -116,12 +136,22 @@ class VoiceEngine(
     /** The command (and any reply) is finished: listen for a follow-up, or sleep. */
     fun commandFinished() = main.post { replyFinished() }
 
-    private fun replyFinished() {
+    /**
+     * One turn = you speak → NEXUS says "On it" → does it → says the result. We only open the
+     * follow-up window once NEXUS has finished talking AND finished working, so it never listens
+     * in the middle of a task (and never hears itself).
+     */
+    private fun replyFinished(waitedMs: Long = 0) {
         if (!conversation || !awaitingReply || isSpeaking) return
-        main.postDelayed({ if (conversation && awaitingReply && !isSpeaking) openWindow(followUpMs) }, 300)
+        if (agentBusy()) {
+            if (waitedMs < 90_000) main.postDelayed({ replyFinished(waitedMs + 400) }, 400)
+            return
+        }
+        val ms = if (agentWaiting()) 10_000L else followUpMs
+        main.postDelayed({ if (conversation && awaitingReply && !isSpeaking && !agentBusy()) openWindow(ms) }, 350)
     }
 
-    // ---------------- voice output: neural pack first, then the system British voice
+    // ---------------- voice output: neural pack first, then the system voice (always something is tried)
     @Volatile var cinematic: CinematicVoice? = null
     @Volatile var useNeural = true
     @Volatile var pitch = 0.95f
@@ -129,7 +159,16 @@ class VoiceEngine(
     @Volatile var muted = false
     private val neuralQueue = ArrayDeque<String>()
     @Volatile private var neuralBusy = false
+    private var neuralToken = 0
+    private var neuralStarted = false
     private var britishVoice: android.speech.tts.Voice? = null
+    private var triedBritish = false
+
+    // System-voice bookkeeping: which utterances are queued / have started.
+    private val sysOpen = HashSet<String>()
+    private val sysStarted = HashSet<String>()
+    private var sysSeq = 0
+    private var sysFailures = 0
 
     /** The system's British English male voice, if installed (Google TTS: rjs / gbd / gbb). */
     private fun pickBritishVoice(t: TextToSpeech): android.speech.tts.Voice? = runCatching {
@@ -137,8 +176,23 @@ class VoiceEngine(
         vs.firstOrNull { v -> listOf("rjs", "gbd", "gbb", "male").any { v.name.contains(it, true) } } ?: vs.firstOrNull()
     }.getOrNull()
 
+    /** Pick the best voice this phone's engine can really speak with; never leave it on a language it lacks. */
+    private fun configureSystemVoice(t: TextToSpeech, hindi: Boolean) {
+        if (hindi) { if (t.isLanguageAvailable(Locale("hi", "IN")) >= TextToSpeech.LANG_AVAILABLE) { t.language = Locale("hi", "IN"); return } }
+        else {
+            if (!triedBritish) { britishVoice = pickBritishVoice(t); triedBritish = true }
+            val ok = britishVoice?.let { v -> runCatching { t.setVoice(v) == TextToSpeech.SUCCESS }.getOrDefault(false) } ?: false
+            if (ok) return
+        }
+        for (loc in listOf(Locale.UK, Locale("en", "IN"), Locale.US, Locale.ENGLISH)) {
+            if (t.isLanguageAvailable(loc) >= TextToSpeech.LANG_AVAILABLE) { t.language = loc; return }
+        }
+        // Otherwise leave the engine's own default voice.
+    }
+
     fun speak(text: String) = main.post {
-        if (muted || text.isBlank()) { afterSpeaking(); return@post }
+        if (muted) { afterSpeaking(); return@post }
+        if (text.isBlank()) { afterSpeaking(); return@post }
         // Speaking during a listening window: stop listening; we listen again after the reply.
         if (conversation) { awaitingReply = true; windowUntil = 0 }
         pauseRecognizer()
@@ -148,32 +202,88 @@ class VoiceEngine(
             if (!neuralBusy) playNextNeural()
             return@post
         }
+        speakSystem(text)
+    }
+
+    private fun speakSystem(text: String) {
         val t = tts
-        if (t == null || !ttsReady) { afterSpeaking(); return@post }
-        if (Devanagari.containsDevanagari(text) || language == "hi") t.language = Locale("hi", "IN")
-        else {
-            if (britishVoice == null) britishVoice = pickBritishVoice(t)
-            britishVoice?.let { v -> runCatching { t.voice = v } } ?: run { t.language = Locale.UK }
+        if (t == null || !ttsReady) {
+            fail("the phone's speech engine isn't ready (Settings → Text-to-speech output)")
+            afterSpeaking(); return
         }
-        t.setSpeechRate(speechRate)
-        t.setPitch(pitch)
+        runCatching {
+            configureSystemVoice(t, Devanagari.containsDevanagari(text) || language == "hi")
+            t.setSpeechRate(speechRate)
+            t.setPitch(pitch)
+        }
+        val id = "nexus-${++sysSeq}"
+        sysOpen += id
         systemSpeaking = true
         _state.value = VoiceState.SPEAKING
-        t.speak(text, TextToSpeech.QUEUE_ADD, null, "nexus-${System.nanoTime()}")
+        val r = runCatching { t.speak(text, TextToSpeech.QUEUE_ADD, null, id) }.getOrDefault(TextToSpeech.ERROR)
+        if (r != TextToSpeech.SUCCESS) { fail("the phone's speech engine refused to speak"); sysFinished(id); return }
+        // If the engine never starts (silent failure), don't leave NEXUS "speaking" forever.
+        main.postDelayed({
+            if (id in sysOpen && id !in sysStarted) {
+                runCatching { t.stop() }
+                if (++sysFailures >= 1) fail("the phone's speech engine didn't make any sound. Install or enable Google \"Speech Services\" text-to-speech")
+                sysFinished(id)
+            }
+        }, 5000)
+    }
+
+    private fun sysFinished(id: String?) {
+        id?.let { sysOpen.remove(it); sysStarted.remove(it) }
+        if (sysOpen.isEmpty()) systemSpeaking = false
+        afterSpeaking()
     }
 
     private fun playNextNeural() {
         val c = cinematic ?: return
         val next = neuralQueue.removeFirstOrNull() ?: run { neuralBusy = false; afterSpeaking(); return }
         neuralBusy = true
+        neuralStarted = false
+        val token = ++neuralToken
         _state.value = VoiceState.SPEAKING
         val ok = c.speak(next, speechRate, pitch, effects,
-            onStart = { main.post { _state.value = VoiceState.SPEAKING; pauseRecognizer() } },
-            onDone = { main.post { playNextNeural() } })
-        if (!ok) { neuralBusy = false; neuralQueue.clear(); useNeural = false; speak(next) }
+            onStart = { main.post { if (token == neuralToken) { neuralStarted = true; _issue.value = null; _state.value = VoiceState.SPEAKING; pauseRecognizer() } } },
+            onDone = { main.post { if (token == neuralToken) playNextNeural() } },
+            onFail = { why -> main.post { if (token == neuralToken) neuralFailed(next, why) } })
+        if (!ok) { neuralFailed(next, "the voice isn't loaded"); return }
+        // The first sentence should start within a few seconds; if not, use the phone's voice.
+        main.postDelayed({ if (token == neuralToken && !neuralStarted) { cinematic?.stop(); neuralFailed(next, "the voice took too long to start") } }, 10_000)
     }
 
-    val isSpeaking: Boolean get() = neuralBusy || systemSpeaking || tts?.isSpeaking == true
+    /** The neural voice made no sound: say it (and anything queued) with the phone's voice instead. */
+    private fun neuralFailed(text: String, why: String) {
+        neuralToken++
+        neuralBusy = false
+        useNeural = false
+        fail("the downloaded voice couldn't play ($why), so I'm using the phone's voice")
+        val rest = neuralQueue.toList(); neuralQueue.clear()
+        speakSystem(text)
+        rest.forEach { speakSystem(it) }
+    }
+
+    /** For the "Test voice" button: speaks and reports what happened. */
+    fun diagnose(): String = buildString {
+        append(if (muted) "Voice is muted. " else "")
+        append(if (useNeural && cinematic?.ready == true) "Neural voice: loaded. " else "Neural voice: not in use. ")
+        append(if (ttsReady) "Phone voice: ready. " else "Phone voice: NOT ready. ")
+        _issue.value?.let { append("Last problem: $it. ") }
+        bluetoothHint()?.let { append(it) }
+    }
+
+    /** A connected Bluetooth speaker/earbuds takes the sound away from the phone speaker. */
+    fun bluetoothHint(): String? = runCatching {
+        val am = context.getSystemService(android.media.AudioManager::class.java)
+        val bt = am?.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)?.any {
+            it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == 26 /* BLE headset */ || it.type == 27 /* BLE speaker */
+        }
+        if (bt == true) "A Bluetooth audio device is connected, so my voice may be playing there instead of the phone speaker." else null
+    }.getOrNull()
+
+    val isSpeaking: Boolean get() = neuralBusy || systemSpeaking
 
     private fun afterSpeaking() {
         if (isSpeaking) return

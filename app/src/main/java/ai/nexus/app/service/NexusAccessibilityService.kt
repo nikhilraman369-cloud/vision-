@@ -71,44 +71,69 @@ class NexusAccessibilityService : AccessibilityService() {
 
 
     // ------------------------------------------------ volume up + down = "listen"
-    private var upHeld = 0L
-    private var downHeld = 0L
-    private var comboFired = false
-    private var musicBefore = -1
-    private var ringBefore = -1
+    //
+    // The first key press is held back for a moment. If the other key joins within that moment it's
+    // the "listen" shortcut and the phone's volume is never touched (no volume bar). If not, the
+    // press is replayed as a normal volume change, so single presses still work as usual.
+    private val keyHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var upAt = 0L
+    private var downAt = 0L
+    private var comboActive = false
+    private var pendingKey = 0
+    private var pendingFlushed = true
+    private val flushRunnable = Runnable { flushPendingKey() }
+
+    private fun applyVolume(code: Int) {
+        val am = getSystemService(android.media.AudioManager::class.java) ?: return
+        runCatching {
+            am.adjustSuggestedStreamVolume(
+                if (code == android.view.KeyEvent.KEYCODE_VOLUME_UP) android.media.AudioManager.ADJUST_RAISE else android.media.AudioManager.ADJUST_LOWER,
+                android.media.AudioManager.USE_DEFAULT_STREAM_TYPE, android.media.AudioManager.FLAG_SHOW_UI,
+            )
+        }
+    }
+
+    private fun flushPendingKey() {
+        if (pendingKey != 0 && !pendingFlushed) { pendingFlushed = true; applyVolume(pendingKey) }
+    }
 
     override fun onKeyEvent(e: android.view.KeyEvent): Boolean {
         val code = e.keyCode
         if (code != android.view.KeyEvent.KEYCODE_VOLUME_UP && code != android.view.KeyEvent.KEYCODE_VOLUME_DOWN) return false
         val app = NexusApp.get(this)
         if (!app.memory.settings.volumeKeys) return false
+        // Leave the keys alone during calls / ringing, and in camera apps (volume = shutter).
         val am = getSystemService(android.media.AudioManager::class.java)
-        if (am?.mode == android.media.AudioManager.MODE_IN_CALL || am?.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) return false
+        if (am != null && am.mode != android.media.AudioManager.MODE_NORMAL) return false
+        if (foregroundPackage?.contains("camera", ignoreCase = true) == true) return false
+
         val isUp = code == android.view.KeyEvent.KEYCODE_VOLUME_UP
         val now = android.os.SystemClock.uptimeMillis()
         if (e.action == android.view.KeyEvent.ACTION_DOWN) {
-            if (e.repeatCount > 0) return comboFired
-            val other = if (isUp) downHeld else upHeld
-            if (other == 0L && !comboFired) {
-                // First key of a possible combo: remember volumes so we can undo its step.
-                musicBefore = am?.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) ?: -1
-                ringBefore = am?.getStreamVolume(android.media.AudioManager.STREAM_RING) ?: -1
+            if (e.repeatCount > 0) {                       // key held down
+                if (comboActive || (pendingKey == code && !pendingFlushed)) return true
+                applyVolume(code); return true             // holding a single key keeps changing the volume
             }
-            if (isUp) upHeld = now else downHeld = now
-            if (other != 0L && now - other < 700 && !comboFired) {
-                comboFired = true
-                runCatching { if (musicBefore >= 0) am?.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, musicBefore, 0) }
-                runCatching { if (ringBefore > 0) am?.setStreamVolume(android.media.AudioManager.STREAM_RING, ringBefore, 0) }
+            if (isUp) upAt = now else downAt = now
+            val otherAt = if (isUp) downAt else upAt
+            if (otherAt != 0L && now - otherAt <= COMBO_MS && !comboActive) {
+                keyHandler.removeCallbacks(flushRunnable)
+                pendingKey = 0; pendingFlushed = true
+                comboActive = true
                 app.quickListen()
                 return true
             }
-            return false
+            if (comboActive) return true
+            pendingKey = code; pendingFlushed = false
+            keyHandler.removeCallbacks(flushRunnable)
+            keyHandler.postDelayed(flushRunnable, COMBO_MS)
+            return true
         }
         if (e.action == android.view.KeyEvent.ACTION_UP) {
-            if (isUp) upHeld = 0 else downHeld = 0
-            val consumed = comboFired
-            if (upHeld == 0L && downHeld == 0L) comboFired = false
-            return consumed
+            if (isUp) upAt = 0 else downAt = 0
+            if (pendingKey == code && !pendingFlushed) { keyHandler.removeCallbacks(flushRunnable); flushPendingKey() } // a quick tap
+            if (upAt == 0L && downAt == 0L) comboActive = false
+            return true
         }
         return false
     }
@@ -464,6 +489,7 @@ class NexusAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        private const val COMBO_MS = 220L
         @Volatile var instance: NexusAccessibilityService? = null
         private const val QUIET_MS = 120L
     }

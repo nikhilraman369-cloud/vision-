@@ -97,16 +97,17 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
     /**
      * Speak [text]. [onStart] fires when audio begins, [onDone] when it ends or is stopped.
      */
-    fun speak(text: String, speed: Float, pitch: Float, effects: Boolean, onStart: () -> Unit, onDone: () -> Unit): Boolean {
+    fun speak(text: String, speed: Float, pitch: Float, effects: Boolean, onStart: () -> Unit, onDone: () -> Unit, onFail: (String) -> Unit = {}): Boolean {
         if (tts == null) return false
         val gen = generation.incrementAndGet()
         val queue = LinkedBlockingQueue<Pair<FloatArray, Int>>()
         val parts = sentences(text)
         val end = FloatArray(0) to -1
+        val lastErrRef = java.util.concurrent.atomic.AtomicReference<String?>(null)
         synth.execute {
             for (p in parts) {
                 if (generation.get() != gen) break
-                runCatching { synthOne(p, speed) }.getOrNull()?.let { queue.put(it) }
+                runCatching { synthOne(p, speed) }.onFailure { lastErrRef.set(it.message ?: it.javaClass.simpleName) }.getOrNull()?.let { if (it.first.isNotEmpty()) queue.put(it) else lastErrRef.set("the voice produced no sound") }
             }
             queue.put(end)
         }
@@ -152,6 +153,8 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
                 runCatching { reverb?.release(); bass?.release() }
                 track?.release(); track = null
                 abandonFocus()
+                // Nothing was played (and we weren't interrupted): tell the caller so it can use another voice.
+                if (!started && generation.get() == gen) { val why = lastErrRef.get() ?: "the voice produced no sound"; lastError = why; onFail(why) }
                 onDone()
             }
         }
