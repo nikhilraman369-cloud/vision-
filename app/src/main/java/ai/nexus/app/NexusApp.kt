@@ -173,7 +173,7 @@ class NexusApp : Application() {
         voice.startListening()
     }
 
-    /** Volume up + down pressed together: start listening from anywhere. */
+    /** Quick-settings tile / any external trigger: start listening from anywhere. */
     fun quickListen() {
         haptics.success()
         if (memory.settings.earcons) sounds.activate()
@@ -193,7 +193,7 @@ class NexusApp : Application() {
 
     /** Start "Hey Nexus" if the user turned it on (must be called while the app is in front). */
     fun ensureHandsFree(context: android.content.Context) {
-        // Always-on "Hey Nexus" was replaced by bubble tap / volume up + down (simpler, no flicker).
+        // Always-on "Hey Nexus" was replaced by bubble tap / quick-settings tile (simpler, no flicker).
         val want = false
         if (want && ai.nexus.app.voice.NexusVoiceService.instance == null) ai.nexus.app.voice.NexusVoiceService.start(context)
         if (!want && ai.nexus.app.voice.NexusVoiceService.instance != null) ai.nexus.app.voice.NexusVoiceService.stop(context)

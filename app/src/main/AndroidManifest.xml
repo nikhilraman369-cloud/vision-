@@ -126,6 +126,17 @@
         </service>
 
         <service
+            android:name=".service.ListenTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_nexus"
+            android:label="NEXUS"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <service
             android:name=".voice.NexusVoiceService"
             android:exported="false"
             android:foregroundServiceType="microphone" />

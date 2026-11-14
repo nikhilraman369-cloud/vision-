@@ -9,7 +9,7 @@ import ai.nexus.core.nlu.Fuzzy
 object CommandCatalog {
     val sections: List<Pair<String, List<String>>> = listOf(
         "KEEP GOING · LATER · SCHEDULE" to listOf("Keep scrolling up", "Scroll down slowly", "Faster", "Slower", "Stop", "Scroll the reel after 15 seconds", "After 10 minutes turn off wifi", "Call mom in 5 minutes", "At 9 pm message Rahul saying happy birthday", "Kal subah 9 baje Rahul ko message karo ki meeting hai", "What have I scheduled", "Cancel the scheduled message to Rahul"),
-        "ASK ME ANYTHING (tap N or press volume up + down)" to listOf("Can you talk to me?", "Explain GST in simple words", "What is depreciation?", "Give me a quick pep talk", "How do I prepare for CA Inter audit?"),
+        "ASK ME ANYTHING (tap the N or the quick-settings tile)" to listOf("Can you talk to me?", "Explain GST in simple words", "What is depreciation?", "Give me a quick pep talk", "How do I prepare for CA Inter audit?"),
         "ON ANY SCREEN" to listOf("What's on my screen", "Read this page", "Tap Settings", "Open the second result", "Scroll down", "Go back", "Tap top right", "Double tap center", "Send this to Arjun"),
         "TYPING IN ANY APP" to listOf("Type do it later", "Send see you tomorrow", "Copy this", "Paste"),
         "YOUTUBE" to listOf("Search filmmaking on YouTube", "Open the first video", "Open the first short", "Go to Shorts", "Next short", "Like it", "Comment amazing video", "Pause the video"),

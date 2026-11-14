@@ -206,7 +206,7 @@ class MainActivity : AppCompatActivity() {
     private fun render(lines: List<ai.nexus.app.ChatLine>) {
         chatBox.removeAllViews()
         if (lines.isEmpty()) {
-            chatBox.addView(label("Good to see you, ${app.memory.settings.addressAs}.\n\nTap 🎤 or the floating N, or press volume up + down together, and just talk. Ask me anything, or tell me what to do on your phone. English, Hindi or Hinglish.\n\nTry: “Open YouTube and play the first video”, “Rahul ko WhatsApp pe bolo main 10 minute mein aa raha hoon”, or “Explain GST in simple words”.", 15f, Ui.MUTED))
+            chatBox.addView(label("Good to see you, ${app.memory.settings.addressAs}.\n\nTap 🎤, the floating N, or the NEXUS tile in your quick settings, and just talk. Ask me anything, or tell me what to do on your phone. English, Hindi or Hinglish.\n\nTry: “Open YouTube and play the first video”, “Rahul ko WhatsApp pe bolo main 10 minute mein aa raha hoon”, or “Explain GST in simple words”.", 15f, Ui.MUTED))
         }
         lines.forEach { chatBox.addView(bubble(it.text, it.fromUser, it.detail)) }
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }

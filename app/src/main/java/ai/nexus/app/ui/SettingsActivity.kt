@@ -93,8 +93,7 @@ class SettingsActivity : AppCompatActivity() {
 
         // ---- Listening
         val listen = card("🎙  Listening",
-            "Tap the floating N, or press volume up + down together. NEXUS listens, does it, then keeps listening 6 seconds for a follow-up and goes back to sleep.")
-        listen.toggle("Volume up + down together starts listening", s.volumeKeys) { v -> update { it.copy(volumeKeys = v) } }
+            "Tap the floating N, the mic button, or the NEXUS tile in your quick settings (swipe down, tap the pencil, drag NEXUS up). NEXUS listens, does it, then keeps listening 6 seconds for a follow-up and goes back to sleep. Your volume buttons are never touched.")
         listen.addView(label("Language", 13f, Ui.MUTED), Ui.matchWrap().apply { topMargin = dp(8) })
         val langs = listOf("auto" to "English + Hinglish", "en" to "English only", "hi" to "Hindi (हिन्दी)")
         listen.addView(Spinner(this).apply {

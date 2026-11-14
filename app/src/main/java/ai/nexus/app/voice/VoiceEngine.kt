@@ -20,8 +20,7 @@ enum class VoiceState { OFF, LISTENING, HEARING, SPEAKING }
 /**
  * Speech in and out.
  *
- * Listening works in short windows: tap the bubble (or press volume up + down
- * together) and NEXUS listens for a few seconds. After it answers, it listens
+ * Listening works in short windows: tap the bubble (or the quick-settings tile) and NEXUS listens for a few seconds. After it answers, it listens
  * again for a follow-up for [followUpMs]; if you say nothing, it goes back to
  * sleep. It never listens while it is speaking, so it can't hear itself, and
  * the visible state stays steady while the recogniser restarts in between.

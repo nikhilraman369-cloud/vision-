@@ -75,7 +75,7 @@ data class UserSettings(
     val autoCapture: String = "ask",
     /** Seconds the conversation stays open after a reply. */
     val followUpSeconds: Int = 6,
-    /** Press volume up + down together to start listening. */
+    /** Unused since 2.5 (the volume-button shortcut was removed). */
     val volumeKeys: Boolean = true,
     val morningBrief: String = "07:30",
     val eveningReview: String = "21:30",

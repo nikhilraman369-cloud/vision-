@@ -30,3 +30,4 @@ Choices made without asking, as the build prompt asked. Each one can be changed 
 | 24 | If the neural voice produces no sound, fall back to the system voice automatically and say so in the chat | Silent failures were invisible | Panel → Voice → Test voice |
 | 25 | Teaching = live recording only; shared screen-recording videos are not imported | Selectors (ids/text) need the accessibility tree; video would need an on-device vision model | Teach screen explains |
 | 26 | The skill's name is also its first trigger phrase | One field, no second "name it" step | Teach → Phrases |
+| 27 | Removed the volume-up+down shortcut entirely; added a quick-settings tile | Three interception designs all disturbed normal volume on the user's phone; not worth the risk | none |
