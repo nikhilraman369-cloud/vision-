@@ -74,6 +74,10 @@ interface SystemActions {
     suspend fun openCamera(front: Boolean, video: Boolean): SysResult = SysResult.Failed("No camera app.")
     /** Whether audio is actually playing right now; null if unknown. Used to verify "play X" really started. */
     suspend fun isMusicActive(): Boolean? = null
+    /** The id of the best-matching video for [query] (looked up online), or null if unavailable. */
+    suspend fun resolveVideoId(query: String): String? = null
+    /** Open [url] directly in the app [packageName] (e.g. a YouTube Music watch link, which starts playing). */
+    suspend fun openInApp(url: String, packageName: String): SysResult = SysResult.Failed("Not supported here.")
     /** Short haptic patterns for silent feedback. */
     fun haptic(kind: String) {}
     suspend fun batteryPercent(): Int?

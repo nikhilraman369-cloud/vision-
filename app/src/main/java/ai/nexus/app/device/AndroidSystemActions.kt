@@ -387,6 +387,30 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
         out.toList()
     }
 
+    /**
+     * Finds the first real video result for [query] on YouTube (the page's embedded search data), so a song can be
+     * started directly instead of fighting a results screen. Null on any problem: callers fall back to the UI.
+     */
+    override suspend fun resolveVideoId(query: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = java.net.URL("https://www.youtube.com/results?hl=en&gl=US&search_query=" + java.net.URLEncoder.encode(query, "UTF-8"))
+            val c = (url.openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 4000; readTimeout = 5000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+                setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+                setRequestProperty("Cookie", "CONSENT=YES+1; SOCS=CAI")
+            }
+            val body = c.inputStream.bufferedReader().use { it.readText() }
+            // The first normal video result (ads and shelves use other renderer names).
+            Regex("\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"").find(body)?.groupValues?.get(1)
+        }.getOrNull()
+    }
+
+    override suspend fun openInApp(url: String, packageName: String): SysResult {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(packageName)
+        return if (start(i)) SysResult.Done("") else SysResult.Failed("I couldn't open that in the app.")
+    }
+
     override suspend fun isMusicActive(): Boolean? {
         val am = context.getSystemService(AudioManager::class.java) ?: return null
         if (am.isMusicActive) return true

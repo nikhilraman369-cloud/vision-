@@ -1,5 +1,9 @@
 # NEXUS v2 — Progress
 
+## 2.7.1 (versionCode 19): YouTube Music actually plays the song
+- YT Music's "play from search" shortcut only opens its results page. NEXUS now looks the song up and opens it directly in YouTube Music (a watch link, which starts playing), and checks that music is really playing. If that fails it falls back to the old shortcut and then to tapping the result, which now also matches the result by its text when the list can't be read as rows.
+- Needs internet for the lookup. Untested against the live YouTube page (could not reach it from the build machine), so it fails safe: any problem falls back to the old ways.
+
 ## 2.7.0 (versionCode 18): patience, same-name contacts, Instagram songs, animated orb
 - **Patience:** a screen step that can't find its target (app still loading) now waits for the screen to settle and retries twice before giving up or asking for help. Per-app patience raised to 5–15 s.
 - **Same-name contacts:** if the name you said matches a contact exactly (even two with the same name), NEXUS just uses the first one instead of asking.

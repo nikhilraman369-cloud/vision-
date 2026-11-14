@@ -1301,6 +1301,20 @@ class Nexus(
             ?: ctx.currentPackage?.takeIf { it == Packages.SPOTIFY || it == Packages.YT_MUSIC || it == Packages.YOUTUBE }
             ?: memory.preference("music app")?.let { apps.resolve(it)?.packageName }
         if (pkg == Packages.INSTAGRAM) return playOnInstagram(cmd.query)
+        // YouTube Music's "play from search" only opens its results page. Look the song up and open it directly: it starts playing.
+        if (pkg == Packages.YT_MUSIC) {
+            val id = runCatching { system.resolveVideoId(cmd.query) }.getOrNull()
+            if (id != null) {
+                val r = sys(system.openInApp("https://music.youtube.com/watch?v=$id", Packages.YT_MUSIC))
+                if (r is Outcome.Success) {
+                    when (waitForMusic(7000)) {
+                        true, null -> { ctx.currentItem = "song: ${cmd.query}"; return Outcome.Success("Playing ${cmd.query}.") }
+                        false -> {}   // didn't start: fall through to tapping the result
+                    }
+                }
+            }
+            // Couldn't start it directly: carry on with the usual ways below (search shortcut, then tapping the result).
+        }
         if (pkg == Packages.YOUTUBE) {
             val r = runCommand(Command.Search(cmd.query, "YouTube"))
             if (r !is Outcome.Success) return r
@@ -1354,9 +1368,12 @@ class Nexus(
         if (searched is Outcome.Failed) return searched
         val q = Fuzzy.normalize(query)
         repeat(3) { attempt ->
-            val s = ops.waitForReady(memory.patience(pkg, 8000)) { snap -> songRows(snap, q).isNotEmpty() }
+            fun pick(snap: ai.nexus.core.screen.ScreenSnapshot) = songRows(snap, q).firstOrNull()
+                ?: ai.nexus.core.screen.ElementFinder(snap).byLabel(query, requireClickable = true, minScore = 0.55)
+                ?: query.split(' ').filter { it.length > 2 }.firstNotNullOfOrNull { w -> ai.nexus.core.screen.ElementFinder(snap).byLabel(w, requireClickable = true, minScore = 0.8) }
+            val s = ops.waitForReady(memory.patience(pkg, 8000)) { snap -> pick(snap) != null }
                 ?: return Outcome.Failed("The search results didn't load.", blocking = false)
-            val row = songRows(s, q).firstOrNull() ?: return Outcome.Failed("I couldn't find \"$query\" in the results.", blocking = false)
+            val row = pick(s) ?: return Outcome.Failed("I couldn't find \"$query\" in the results.", blocking = false)
             ops.tapReliably(row, s)
             when (waitForMusic(3000)) {
                 true, null -> { ctx.currentItem = "song: $query"; return Outcome.Success() }

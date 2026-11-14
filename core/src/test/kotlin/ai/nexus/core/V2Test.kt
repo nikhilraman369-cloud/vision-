@@ -278,4 +278,17 @@ class V2Test {
         val c = one("play kesariya on instagram")
         assertTrue(c is Command.PlayMedia && c.app?.lowercase() == "instagram", c.toString())
     }
+
+    @Test fun youtubeMusicSongStartsPlayingDirectly() {
+        val opened = ArrayList<String>()
+        val phone = object : ScreenPhone() {
+            override suspend fun resolveVideoId(query: String) = "aBcDeFgHiJk"
+            override suspend fun openInApp(url: String, packageName: String): ai.nexus.core.device.SysResult { opened += "$packageName|$url"; return ai.nexus.core.device.SysResult.Done("") }
+            override suspend fun isMusicActive() = true
+        }
+        val (n, out, _) = setup(phone)
+        run(n, "play Skyfall on YT Music")
+        assertTrue(opened.any { it.contains("music.youtube.com/watch?v=aBcDeFgHiJk") }, opened.toString() + out)
+        assertTrue(out.any { it.startsWith("Playing") }, out.toString())
+    }
 }

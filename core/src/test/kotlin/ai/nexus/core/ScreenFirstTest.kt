@@ -27,7 +27,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /** A phone with a WhatsApp chat list, a generic AI-chat app and YouTube Music suggestions. */
-class ScreenPhone : FakePhone() {
+open class ScreenPhone : FakePhone() {
     var waChat: String? = null
     var aiDraft = ""
     val aiSent = ArrayList<String>()
