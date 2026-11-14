@@ -406,6 +406,17 @@ class Nexus(
             var outcome = kotlinx.coroutines.withTimeoutOrNull(STEP_TIMEOUT_MS) {
                 if (learnedSkill != null) executeSkill(learnedSkill) else runCommand(cmd, step.source)
             } ?: Outcome.Failed("That step took too long, so I moved on.", blocking = navigates(cmd))
+            // Patience: apps load slowly. If a screen step couldn't find its target, wait for the screen to settle and try again.
+            var patience = 0
+            while (patience < 2 && screenStep(cmd) && learnedSkill == null && notFound(outcome)) {
+                patience++
+                val pkg = ops.current()?.packageName
+                ops.invalidate()
+                ops.waitForReady(memory.patience(pkg, 6000)) { snap -> !ops.isLoading(snap) }
+                kotlinx.coroutines.delay(500L * patience)
+                ops.invalidate()
+                outcome = kotlinx.coroutines.withTimeoutOrNull(STEP_TIMEOUT_MS) { runCommand(cmd, step.source) } ?: outcome
+            }
             if (outcome is Outcome.NeedsAgent) outcome = agentFallback(step.source, cmd, outcome)
             emit(NexusEvent.StepFinished(i + 1, desc, outcome))
             logStep(step.source, desc, outcome, System.currentTimeMillis() - t0)
@@ -478,6 +489,9 @@ class Nexus(
 
     private fun slow(c: Command) = c is Command.OpenApp || c is Command.Search || c is Command.PlayMedia || c is Command.ShareTo ||
         c is Command.SendMessage || c is Command.OpenChat || c is Command.OpenResult || c is Command.Agentic || c is Command.StartMode
+
+    private fun notFound(o: Outcome) = o is Outcome.NeedsAgent ||
+        (o is Outcome.Failed && (o.message.startsWith("I couldn't find") || o.message.startsWith("I don't see") || o.message.contains("didn't load")))
 
     private fun screenStep(c: Command) = c is Command.Tap || c is Command.OpenResult || c is Command.GoTo || c is Command.OpenComments ||
         c is Command.Write || c is Command.Search || c is Command.OpenChat || c is Command.React || c is Command.Submit || c is Command.Share ||
@@ -863,8 +877,11 @@ class Nexus(
         val found = runCatching { system.contacts(aliased) }.getOrDefault(emptyList())
         if (found.isEmpty()) return ContactLookup.NotFound
         val n = Fuzzy.normalize(aliased)
-        found.filter { Fuzzy.normalize(it.name) == n }.let { if (it.size == 1) return ContactLookup.Found(it[0]) }
+        // Exactly the name you said (even if two contacts share it): just use the first, don't ask.
+        found.filter { Fuzzy.normalize(it.name) == n }.let { if (it.isNotEmpty()) return ContactLookup.Found(it[0]) }
         if (found.size == 1) return ContactLookup.Found(found[0])
+        // All matches have the very same name (duplicates): no point asking which one.
+        if (found.map { Fuzzy.normalize(it.name) }.distinct().size == 1) return ContactLookup.Found(found[0])
         // A remembered choice from last time ("Rahul" → "Rahul Sharma").
         ctx.currentContact?.takeIf { cur -> found.any { it.id == cur.id } && Fuzzy.normalize(cur.name).startsWith(n) }?.let { return ContactLookup.Found(it) }
         return ContactLookup.Ambiguous(found.take(5))
@@ -1283,6 +1300,7 @@ class Nexus(
         val pkg = cmd.app?.let { apps.resolve(it)?.packageName }
             ?: ctx.currentPackage?.takeIf { it == Packages.SPOTIFY || it == Packages.YT_MUSIC || it == Packages.YOUTUBE }
             ?: memory.preference("music app")?.let { apps.resolve(it)?.packageName }
+        if (pkg == Packages.INSTAGRAM) return playOnInstagram(cmd.query)
         if (pkg == Packages.YOUTUBE) {
             val r = runCommand(Command.Search(cmd.query, "YouTube"))
             if (r !is Outcome.Success) return r
@@ -1301,6 +1319,22 @@ class Nexus(
         val target = pkg ?: listOf(Packages.YT_MUSIC, Packages.SPOTIFY).firstOrNull { p -> apps.resolve(p.substringAfterLast('.'))?.packageName == p }
             ?: Packages.YT_MUSIC
         return playViaUi(cmd.query, target)
+    }
+
+    /** "Play Kesariya on Instagram": search → Audio results → the song's page → its first reel (which plays the song). */
+    private suspend fun playOnInstagram(query: String): Outcome {
+        val searched = runCommand(Command.Search(query, "Instagram"))
+        if (searched !is Outcome.Success) return searched
+        val wait = memory.patience(Packages.INSTAGRAM, 8000)
+        ops.waitForReady(wait) { !ops.isLoading(it) }
+        ops.tapLabel("Audio", timeoutMs = 4000)                  // the Audio tab of the search results, if shown
+        ops.waitForReady(wait) { !ops.isLoading(it) }
+        val song = runCommand(Command.OpenResult(1))             // the song's audio page
+        if (song !is Outcome.Success) return Outcome.Uncertain("I searched Instagram for \"$query\" but couldn't open the song. Tap it and I'll take it from there.")
+        ops.waitForReady(wait) { !ops.isLoading(it) }
+        runCommand(Command.OpenResult(1, "video"))              // a reel using it: plays the song
+        ctx.currentItem = "song: $query"
+        return Outcome.Success("Playing $query on Instagram.")
     }
 
     private suspend fun waitForMusic(ms: Long): Boolean? {

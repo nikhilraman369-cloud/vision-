@@ -1,5 +1,11 @@
 # NEXUS v2 — Progress
 
+## 2.7.0 (versionCode 18): patience, same-name contacts, Instagram songs, animated orb
+- **Patience:** a screen step that can't find its target (app still loading) now waits for the screen to settle and retries twice before giving up or asking for help. Per-app patience raised to 5–15 s.
+- **Same-name contacts:** if the name you said matches a contact exactly (even two with the same name), NEXUS just uses the first one instead of asking.
+- **Songs on Instagram:** "play Kesariya on insta" → search → Audio tab → the song → its first reel.
+- **Animated orb:** new bubble drawn live: breathing (idle), green ripples (listening), fast pulse (hearing you), amber spinning arcs (thinking), turning dashed ring (working), blue sound-wave ring (speaking), orange pulse (waiting for you), red shake (stuck), red dashed ring (teaching). It slides fully onto the screen while active and tucks back when idle.
+
 ## 2.6.0 (versionCode 17): power-button assistant
 - NEXUS can be picked as the phone's **Digital assistant app** (Settings → Listening → "Use NEXUS as my phone's assistant"). The phone's assistant gesture (usually long-press power / home gesture, depends on the phone) then starts NEXUS listening, even from the lock screen. Short power presses are not affected.
 - When NEXUS is the default assistant Android points the default speech recogniser at NEXUS's own stub, so NEXUS now explicitly listens through the phone's real recogniser (Google's if present) in that case.

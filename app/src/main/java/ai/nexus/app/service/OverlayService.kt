@@ -61,7 +61,7 @@ class OverlayService : Service() {
     private var screenW = 1080
     private var screenH = 2400
 
-    private var bubble: TextView? = null
+    private var bubble: OrbView? = null
     private var bubbleLp: WindowManager.LayoutParams? = null
     private var card: LinearLayout? = null
     private var cardLp: WindowManager.LayoutParams? = null
@@ -139,16 +139,15 @@ class OverlayService : Service() {
 
     // ---------------------------------------------------------------- bubble
 
-    private val size get() = (app.memory.settings.bubbleSize * dp).toInt()
+    /** Window size: a little bigger than the orb itself so the ripples and rings have room. */
+    private val size get() = (app.memory.settings.bubbleSize * dp * 1.3f).toInt()
 
     private fun dockX(side: String) = if (side == "left") -(size * 0.38f).toInt() else screenW - (size * 0.62f).toInt()
 
     @SuppressLint("ClickableViewAccessibility")
     private fun addBubble() {
         val s = app.memory.settings
-        val b = TextView(this).apply {
-            text = "N"; textSize = 19f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE); gravity = Gravity.CENTER
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(IDLE); setStroke((2 * dp).toInt(), 0xCCFFFFFF.toInt()) }
+        val b = OrbView(this).apply {
             alpha = s.bubbleOpacity
             contentDescription = "NEXUS. Tap for the command card, double tap to talk, long press for the menu."
         }
@@ -172,7 +171,7 @@ class OverlayService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = ev.rawX - touchX; val dy = ev.rawY - touchY
                     if (dragging || dx * dx + dy * dy > 300) {
-                        if (!dragging) { dragging = true; hideCard(); showCloseTarget(true) }
+                        if (!dragging) { dragging = true; slideAnim?.cancel(); hideCard(); showCloseTarget(true) }
                         lp.x = (startX + dx).toInt(); lp.y = (startY + dy).toInt()
                         closeTarget?.alpha = if (ev.rawY > screenH * 0.85f) 1f else 0.55f
                         runCatching { wm.updateViewLayout(b, lp) }
@@ -183,7 +182,7 @@ class OverlayService : Service() {
                     if (ev.rawY > screenH * 0.85f) { stopSelf(); return@setOnTouchListener true }
                     // Snap to the nearest edge, half hidden; remember where.
                     val side = if (ev.rawX < screenW / 2) "left" else "right"
-                    lp.x = dockX(side)
+                    lp.x = dockX(side); bubbleOut = false
                     lp.y = lp.y.coerceIn((40 * dp).toInt(), screenH - (140 * dp).toInt())
                     runCatching { wm.updateViewLayout(b, lp) }
                     app.memory.updateSettings { it.copy(bubbleSide = side, bubbleY = lp.y.toFloat() / screenH) }
@@ -199,21 +198,41 @@ class OverlayService : Service() {
     private fun renderBubble(v: VoiceState, a: AgentState) {
         val teaching = app.teaching.value
         val stuck = app.stuck.value != null
-        val color = when {
-            stuck -> STUCK
-            v == VoiceState.LISTENING || v == VoiceState.HEARING || (handsFreeActive && a == AgentState.IDLE) -> LISTEN
-            v == VoiceState.SPEAKING -> SPEAK
-            a == AgentState.THINKING -> THINK
-            a == AgentState.EXECUTING -> WORK
-            a == AgentState.PAUSED || a == AgentState.WAITING_FOR_USER -> PAUSE
-            else -> IDLE
+        val mode = when {
+            stuck -> OrbView.Mode.STUCK
+            v == VoiceState.HEARING -> OrbView.Mode.HEARING
+            v == VoiceState.LISTENING -> OrbView.Mode.LISTENING
+            v == VoiceState.SPEAKING -> OrbView.Mode.SPEAKING
+            a == AgentState.THINKING -> OrbView.Mode.THINKING
+            a == AgentState.EXECUTING -> OrbView.Mode.WORKING
+            a == AgentState.PAUSED || a == AgentState.WAITING_FOR_USER -> OrbView.Mode.WAITING
+            else -> OrbView.Mode.IDLE
         }
-        (bubble?.background as? GradientDrawable)?.apply {
-            setColor(color)
-            setStroke(((if (teaching) 4 else 2) * dp).toInt(), if (teaching) 0xFFFF3B30.toInt() else 0xCCFFFFFF.toInt())
+        val orb = bubble ?: return
+        orb.mode = mode
+        orb.teaching = teaching
+        orb.label = if (stuck) "?" else "N"
+        orb.alpha = if (mode == OrbView.Mode.IDLE && !teaching) app.memory.settings.bubbleOpacity else 1f
+        // While NEXUS is doing something, slide the orb fully onto the screen so you can see it; tuck it back when idle.
+        slideBubble(fullyOut = mode != OrbView.Mode.IDLE || teaching)
+    }
+
+    private var slideAnim: ValueAnimator? = null
+    private var bubbleOut = false
+
+    private fun slideBubble(fullyOut: Boolean) {
+        val b = bubble ?: return; val lp = bubbleLp ?: return
+        if (fullyOut == bubbleOut || b.isPressed) return
+        bubbleOut = fullyOut
+        val side = app.memory.settings.bubbleSide
+        val target = if (!fullyOut) dockX(side) else if (side == "left") (4 * dp).toInt() else screenW - size - (4 * dp).toInt()
+        slideAnim?.cancel()
+        slideAnim = ValueAnimator.ofInt(lp.x, target).apply {
+            duration = 260
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { lp.x = it.animatedValue as Int; runCatching { wm.updateViewLayout(b, lp) } }
+            start()
         }
-        bubble?.text = when { v == VoiceState.HEARING -> "●"; a == AgentState.EXECUTING -> "⋯"; stuck -> "?"; else -> "N" }
-        bubble?.alpha = if (color == IDLE) app.memory.settings.bubbleOpacity else 1f
     }
 
     private fun showCloseTarget(show: Boolean) {

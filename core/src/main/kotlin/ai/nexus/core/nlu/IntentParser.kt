@@ -538,16 +538,16 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
             return listOf(Command.Media(MediaKey.PAUSE))
         if (rx("^(?:play|resume|unpause|continue)(?: the| this)? (?:video|music|song|playback|audio|media|track|it)$|^(?:resume|unpause)$|^(?:play)$|^(?:video|gaana|music) (?:chalao|chalu karo|play karo)$").matches(c))
             return listOf(Command.Media(MediaKey.PLAY))
-        rx("^(?:play|put on|listen to|start playing|bajao|chalao)(?: me)? (?!the (?:first|second|third|last|next|previous) |reels?$|shorts?$)(.+?)(?: (?:on|in|using|from) (spotify|youtube music|youtube|yt music|gaana|jiosaavn|wynk|apple music|amazon music))?$").matchEntire(c)?.let {
+        rx("^(?:play|put on|listen to|start playing|bajao|chalao)(?: me)? (?!the (?:first|second|third|last|next|previous) |reels?$|shorts?$)(.+?)(?: (?:on|in|using|from) (spotify|youtube music|youtube|yt music|gaana|jiosaavn|wynk|apple music|amazon music|instagram|insta))?$").matchEntire(c)?.let {
             val q = clean(it.groupValues[1]) ?: return null
             if (Numbers.ordinal(q.substringBefore(' ')) != null) return null
             if (rx("^(?:a |the )?(?:video|music|song|it)$").matches(q)) return listOf(Command.Media(MediaKey.PLAY))
-            return listOf(Command.PlayMedia(q, clean(it.groupValues[2])))
+            return listOf(Command.PlayMedia(q, clean(it.groupValues[2])?.let { a -> if (a.equals("insta", true)) "Instagram" else a }))
         }
-        rx("^(.+?) (?:bajao|chalao|play karo|sunao|laga do|lagao)(?: (spotify|youtube) (?:pe|par|mein))?$").matchEntire(c)?.let {
+        rx("^(.+?) (?:bajao|chalao|play karo|sunao|laga do|lagao)(?: (spotify|youtube|instagram|insta) (?:pe|par|mein))?$").matchEntire(c)?.let {
             val q = it.groupValues[1].replace(rx("^(?:gaana|gana|song)\\s+"), "").trim()
             if (Numbers.ordinal(q.substringBefore(' ')) != null || rx("^(?:reels?|shorts?|video)$").matches(q)) return null
-            return listOf(Command.PlayMedia(q, clean(it.groupValues[2])))
+            return listOf(Command.PlayMedia(q, clean(it.groupValues[2])?.let { a -> if (a.equals("insta", true)) "Instagram" else a }))
         }
         return null
     }

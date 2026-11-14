@@ -263,4 +263,19 @@ class V2Test {
         n.cancelTeaching()
         assertTrue(!n.isTeaching); assertEquals(0, n.teachSteps.value); assertEquals(1, n.life!!.data.skills.size)
     }
+
+    @Test fun twoContactsWithTheSameNameJustCallOne() {
+        val phone = ScreenPhone().apply {
+            contactsDb = listOf(ai.nexus.core.device.Contact("Rahul", listOf("111"), id = "a"), ai.nexus.core.device.Contact("Rahul", listOf("222"), id = "b"))
+        }
+        val (n, out, _) = setup(phone)
+        run(n, "call Rahul")
+        assertTrue(out.none { it.contains("Which", true) }, out.toString())
+        assertTrue(phone.log.any { it.contains("call") && (it.contains("111") || it.contains("222")) }, phone.log.toString())
+    }
+
+    @Test fun playOnInstagramIsUnderstood() {
+        val c = one("play kesariya on instagram")
+        assertTrue(c is Command.PlayMedia && c.app?.lowercase() == "instagram", c.toString())
+    }
 }

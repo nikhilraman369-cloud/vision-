@@ -291,7 +291,7 @@ class LongTermMemory(private val storage: MemoryStorage) {
     }
 
     /** How long to wait for [pkg] before giving up: 2× its usual time, between 4 and 10 s. */
-    fun patience(pkg: String?, base: Long = 6000): Long = (pkg?.let { data.loadMs[it] }?.let { it * 2L } ?: base).coerceIn(4000, 10_000)
+    fun patience(pkg: String?, base: Long = 6000): Long = (pkg?.let { data.loadMs[it] }?.let { it * 2L } ?: base).coerceIn(5000, 15_000)
 
     fun topApps(n: Int = 8): List<String> = data.appUsage.entries.sortedByDescending { it.value }.take(n).map { it.key }
 
