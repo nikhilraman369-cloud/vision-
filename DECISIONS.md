@@ -31,3 +31,4 @@ Choices made without asking, as the build prompt asked. Each one can be changed 
 | 25 | Teaching = live recording only; shared screen-recording videos are not imported | Selectors (ids/text) need the accessibility tree; video would need an on-device vision model | Teach screen explains |
 | 26 | The skill's name is also its first trigger phrase | One field, no second "name it" step | Teach → Phrases |
 | 27 | Removed the volume-up+down shortcut entirely; added a quick-settings tile | Three interception designs all disturbed normal volume on the user's phone; not worth the risk | none |
+| 28 | Power-button support via VoiceInteractionService (no hardware-key interception) | The phone itself owns the power button; we only receive the assistant gesture, so normal power use is untouched | Settings > Listening |

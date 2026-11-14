@@ -94,6 +94,11 @@ class SettingsActivity : AppCompatActivity() {
         // ---- Listening
         val listen = card("🎙  Listening",
             "Tap the floating N, the mic button, or the NEXUS tile in your quick settings (swipe down, tap the pencil, drag NEXUS up). NEXUS listens, does it, then keeps listening 6 seconds for a follow-up and goes back to sleep. Your volume buttons are never touched.")
+        listen.addView(button("Use NEXUS as my phone's assistant (power button)", Ui.BG) {
+            val i = Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS)
+            runCatching { startActivity(i) }.onFailure { runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)) } }
+        }, Ui.matchWrap().apply { topMargin = dp(8) })
+        listen.addView(label("Pick NEXUS under “Digital assistant app”. Then the phone's assistant gesture (usually a long-press of the power button) starts NEXUS. A normal power-button press still locks and wakes the screen.", 12f, Ui.MUTED), Ui.matchWrap().apply { topMargin = dp(4) })
         listen.addView(label("Language", 13f, Ui.MUTED), Ui.matchWrap().apply { topMargin = dp(8) })
         val langs = listOf("auto" to "English + Hinglish", "en" to "English only", "hi" to "Hindi (हिन्दी)")
         listen.addView(Spinner(this).apply {

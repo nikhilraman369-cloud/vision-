@@ -1,5 +1,10 @@
 # NEXUS v2 — Progress
 
+## 2.6.0 (versionCode 17): power-button assistant
+- NEXUS can be picked as the phone's **Digital assistant app** (Settings → Listening → "Use NEXUS as my phone's assistant"). The phone's assistant gesture (usually long-press power / home gesture, depends on the phone) then starts NEXUS listening, even from the lock screen. Short power presses are not affected.
+- When NEXUS is the default assistant Android points the default speech recogniser at NEXUS's own stub, so NEXUS now explicitly listens through the phone's real recogniser (Google's if present) in that case.
+- Untested on a real device. Known caveat: Vivo/iQOO may route the power long-press to its own assistant setting; apps that use the system default recogniser will not work while NEXUS is the default assistant.
+
 ## 2.5.0 (versionCode 16): volume buttons are never touched
 - The volume-button shortcut is **removed completely** (it kept interfering with normal volume on this phone, in three different designs). NEXUS no longer asks Android for key events at all.
 - New ways to start listening: the floating N, the mic button, the notification's Talk button, and a **quick-settings tile** ("NEXUS": swipe down, pencil, drag it up).

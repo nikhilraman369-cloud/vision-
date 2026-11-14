@@ -305,10 +305,26 @@ class VoiceEngine(
         if (preferOffline && !accurate) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
     }
 
+    /**
+     * Normally the phone's default recogniser. If NEXUS itself has become the default (because you made it the
+     * digital assistant), pick the phone's real one (Google's if present) so listening keeps working.
+     */
+    private fun createRecognizer(): SpeechRecognizer {
+        val own = context.packageName
+        val configured = runCatching { android.provider.Settings.Secure.getString(context.contentResolver, "voice_recognition_service") }.getOrNull()
+        if (configured == null || !configured.startsWith("$own/")) return SpeechRecognizer.createSpeechRecognizer(context)
+        val comp = runCatching {
+            val all = context.packageManager.queryIntentServices(Intent(android.speech.RecognitionService.SERVICE_INTERFACE), 0).mapNotNull { it.serviceInfo }.filter { it.packageName != own }
+            (all.firstOrNull { it.packageName == "com.google.android.googlequicksearchbox" } ?: all.firstOrNull { it.packageName.startsWith("com.google") } ?: all.firstOrNull())
+                ?.let { android.content.ComponentName(it.packageName, it.name) }
+        }.getOrNull()
+        return if (comp != null) SpeechRecognizer.createSpeechRecognizer(context, comp) else SpeechRecognizer.createSpeechRecognizer(context)
+    }
+
     private fun startRecognizer() {
         if (!available || isSpeaking) return
         if (recognizer == null) {
-            recognizer = SpeechRecognizer.createSpeechRecognizer(context).also { it.setRecognitionListener(listener) }
+            recognizer = createRecognizer().also { it.setRecognitionListener(listener) }
         }
         runCatching { recognizer?.startListening(recognizerIntent()) }
             .onFailure { main.postDelayed({ if (windowOpen()) startRecognizer() }, 400) }
