@@ -89,9 +89,9 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
     private fun synthOne(s: String, speed: Float): Pair<FloatArray, Int>? {
         synchronized(cache) { cache["$speed|$s"] }?.let { return it }
         val engine = tts ?: return null
-        val a = engine.generate(text = s, sid = speaker, speed = speed)
+        val a = engine.generate(text = s, sid = speaker, speed = speed.coerceIn(0.5f, 2.0f))
         val r = a.samples to a.sampleRate
-        if (s.length < 40) synchronized(cache) { cache["$speed|$s"] = r }
+        if (s.length < 40 && r.first.isNotEmpty()) synchronized(cache) { cache["$speed|$s"] = r }
         return r
     }
 
@@ -149,7 +149,8 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
                         t.stop()
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Throwable) {
+                lastErrRef.set("audio output failed: " + (e.message ?: e.javaClass.simpleName))
             } finally {
                 runCatching { reverb?.release(); bass?.release() }
                 track?.release(); track = null
@@ -162,11 +163,18 @@ class CinematicVoice(private val context: Context, private val packs: VoicePackM
         return true
     }
 
+    /** Android rejects a buffer that isn't a whole number of frames (4 bytes for mono float). 22050 Hz voices hit this. */
+    private fun bufferBytes(rate: Int): Int {
+        val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+        val want = maxOf(if (min > 0) min * 2 else 0, rate)
+        return (want + 3) / 4 * 4
+    }
+
     private fun newTrack(rate: Int, pitch: Float): AudioTrack {
         val t = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
             .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_FLOAT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-            .setBufferSizeInBytes(maxOf(AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT) * 2, rate))
+            .setBufferSizeInBytes(bufferBytes(rate))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         if (pitch != 1f) runCatching { t.playbackParams = PlaybackParams().setPitch(pitch).setSpeed(1f) }

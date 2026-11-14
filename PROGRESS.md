@@ -1,5 +1,9 @@
 # NEXUS v2 — Progress
 
+## 2.4.1 (versionCode 14): the neural voice finally plays
+- **Root cause found:** the audio buffer was sized equal to the voice's sample rate; Android requires a multiple of 4 bytes. Piper voices (22,050 Hz: Lessac, Alan, Ryan, Joe, Amy…) failed to create the audio player, and the error was swallowed, so it looked like "the voice produced no sound". Kokoro (24,000 Hz) was unaffected. Verified the voice packs and sherpa-onnx 1.13.8 themselves work (generated audio from the same Lessac pack and config on a PC; the app's libraries are byte-identical to the official ones).
+- Player errors are now reported instead of swallowed; empty results are no longer cached; speed is clamped to a valid range.
+
 ## 2.4.0 (versionCode 13): Teach ecosystem
 - **Teach screen** (home → 🎓 Teach, also Panel and the bubble's 🎓 chip): name the task in your own words, tap Start, do it once, tap Done. The name is the trigger phrase, so Done saves with no extra questions.
 - **Recording bar** (red, on screen): task name, live step count, Done ✓ and ✕. Also an ongoing notification with Done / Cancel if the bubble isn't shown. If a recording has no name (e.g. "watch me"), Done asks for one.
