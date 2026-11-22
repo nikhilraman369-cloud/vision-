@@ -9,3 +9,5 @@ captures/
 *.keystore
 app/src/main/java/com/k2fsa/
 app/src/main/jniLibs/
+__pycache__/
+*.pyc
