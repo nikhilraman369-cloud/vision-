@@ -1,5 +1,10 @@
 # NEXUS v2 — Progress
 
+## 2.9.0 (versionCode 21): playback that doesn't depend on the screen + app screen recorder
+- **YouTube and YouTube Music play directly:** NEXUS looks the video/song up (YouTube's own search API, JSON; the search page as fallback) and opens it in the app with a watch link, which starts playing from any screen, even while something else is playing. YouTube Music looks up songs (not music videos). "Play X" with no app uses YouTube Music when it's installed.
+- **Teach NEXUS an app (Panel → 🗺):** records the structure of every different screen you open (ids, buttons, lists, positions; typed text is never saved), with a "Learning screens · N saved" bar. Share file saves it to Downloads/NEXUS and opens the share sheet. These recordings are how each daily app gets taught from its real layout.
+- Untested on a real phone; the lookup couldn't be tested from the build machine (YouTube blocked there). It falls back to the old ways on any problem.
+
 ## 2.8.0 (versionCode 20): understands what you mean on screen
 - **Screen grammar:** generic rules for how people point at things and repeat actions, in English, Hindi and Hinglish:
   positions ("second video", "sixth contact", "group at the top", "sabse upar wala chat", "second last", "number 4", "5th wala", "teesri chat"),

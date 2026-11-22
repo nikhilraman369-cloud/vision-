@@ -391,9 +391,35 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
      * Finds the first real video result for [query] on YouTube (the page's embedded search data), so a song can be
      * started directly instead of fighting a results screen. Null on any problem: callers fall back to the UI.
      */
-    override suspend fun resolveVideoId(query: String): String? = withContext(Dispatchers.IO) {
+    /**
+     * Finds the best video (or, for YouTube Music, the best song) for [query] so it can be started directly.
+     * Uses YouTube's own search API (JSON) first, then the search page; null on any problem (callers fall back).
+     */
+    override suspend fun resolveVideoId(query: String, music: Boolean): String? = withContext(Dispatchers.IO) {
+        val idRx = Regex("\"videoId\":\"([A-Za-z0-9_-]{11})\"")
+        fun post(url: String, body: String): String? = runCatching {
+            val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"; doOutput = true; connectTimeout = 4000; readTimeout = 5000
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+                setRequestProperty("Origin", if (music) "https://music.youtube.com" else "https://www.youtube.com")
+            }
+            c.outputStream.use { it.write(body.toByteArray()) }
+            if (c.responseCode !in 200..299) null else c.inputStream.bufferedReader().use { it.readText() }
+        }.getOrNull()
+        val q = org.json.JSONObject.quote(query)
+        if (music) {
+            // YouTube Music, filtered to songs.
+            post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false",
+                """{"context":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20240101.01.00","hl":"en","gl":"IN"}},"query":$q,"params":"EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"}""")
+                ?.let { body -> idRx.find(body)?.groupValues?.get(1) }?.let { return@withContext it }
+        }
+        post("https://www.youtube.com/youtubei/v1/search?prettyPrint=false",
+            """{"context":{"client":{"clientName":"WEB","clientVersion":"2.20240101.00.00","hl":"en","gl":"IN"}},"query":$q}""")
+            ?.let { body -> Regex("\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"").find(body)?.groupValues?.get(1) }?.let { return@withContext it }
+        // Fallback: the search page's embedded data.
         runCatching {
-            val url = java.net.URL("https://www.youtube.com/results?hl=en&gl=US&search_query=" + java.net.URLEncoder.encode(query, "UTF-8"))
+            val url = java.net.URL("https://www.youtube.com/results?hl=en&gl=IN&search_query=" + java.net.URLEncoder.encode(query, "UTF-8"))
             val c = (url.openConnection() as java.net.HttpURLConnection).apply {
                 connectTimeout = 4000; readTimeout = 5000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -401,7 +427,6 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
                 setRequestProperty("Cookie", "CONSENT=YES+1; SOCS=CAI")
             }
             val body = c.inputStream.bufferedReader().use { it.readText() }
-            // The first normal video result (ads and shelves use other renderer names).
             Regex("\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"").find(body)?.groupValues?.get(1)
         }.getOrNull()
     }

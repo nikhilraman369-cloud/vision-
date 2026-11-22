@@ -72,6 +72,7 @@ class PanelActivity : AppCompatActivity() {
     private fun refresh() {
         box.removeAllViews()
         when (section) {
+            "appmap" -> appMap()
             "tasks" -> tasks(); "skills" -> skills(); "modes" -> modes(); "notifications" -> notifications(); "voice" -> voice()
             "bubble" -> bubble(); "study" -> study(); "diagnostics" -> diagnostics(); "permissions" -> permissions(); "privacy" -> privacy()
             "general" -> general(); "home" -> { section = "panel"; panel() }
@@ -161,13 +162,52 @@ class PanelActivity : AppCompatActivity() {
     private fun panel() {
         title("Control panel", "Everything NEXUS does, in one place.")
         listOf(
-            "tasks" to "☑  Tasks & deadlines", "skills" to "🎓  Teach NEXUS & what it learned", "modes" to "◐  Modes & routines",
+            "appmap" to "🗺  Teach NEXUS an app (record its screens)", "tasks" to "☑  Tasks & deadlines", "skills" to "🎓  Teach NEXUS & what it learned", "modes" to "◐  Modes & routines",
             "notifications" to "✉  Notification rules", "voice" to "♪  Voice", "bubble" to "●  Bubble", "study" to "📚  Study & habits",
             "diagnostics" to "⚙  Diagnostics", "permissions" to "✔  Permissions", "privacy" to "🔒  Data & privacy", "general" to "☰  General",
         ).forEach { (k, t) -> box.addView(button(t, Ui.CARD) { open(k) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) }) }
         box.addView(button("🧠  Memory", Ui.CARD) { startActivity(Intent(this, MemoryActivity::class.java)) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) })
         box.addView(button("⟳  Routines (shortcuts)", Ui.CARD) { startActivity(Intent(this, RoutinesActivity::class.java)) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) })
         box.addView(button("⚙  Settings — brain, voice, listening", Ui.CARD) { startActivity(Intent(this, SettingsActivity::class.java)) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) })
+    }
+
+    /** Record an app's real screens so NEXUS can be taught it properly. */
+    private fun appMap() {
+        val rec = ai.nexus.app.learn.AppMapRecorder
+        title("Teach NEXUS an app", "Records the layout of each screen you open (buttons, lists, ids, positions), so NEXUS can be taught that app from its real screens. What you type is never saved.")
+        if (rec.recording) {
+            card {
+                addView(label("● Recording · ${rec.saved()} screens saved", 16f, 0xFFFF6B6B.toInt(), bold = true))
+                addView(label("Go to the app and open its main screens: home, search, results, the player or chat, menus, settings. A small bar at the top shows the count. Tap it, or Stop here, when you're done.", 13f, Ui.MUTED))
+                actions("■ Stop" to { rec.stop(); refresh() })
+            }
+        } else {
+            card {
+                addView(label("How to do it (2–3 minutes per app)", 15f, bold = true))
+                addView(label("1. Tap Start.\n2. Open the app and visit its main screens, e.g. for YouTube Music: home → search → type a song → results → play a song → the player → library.\n3. Tap the bar at the top to stop.\n4. Tap Share file and send it to the person improving NEXUS.\n\nYou can do several apps in one recording.", 13f, Ui.MUTED))
+                actions("● Start" to {
+                    rec.start(this@PanelActivity)
+                    android.widget.Toast.makeText(this@PanelActivity, "Recording. Open the app now.", android.widget.Toast.LENGTH_LONG).show()
+                    startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                })
+            }
+            rec.lastFile()?.takeIf { it.exists() }?.let { f ->
+                card {
+                    addView(label("Last recording: ${rec.saved()} screens", 15f, bold = true))
+                    addView(label(f.name + " · " + (f.length() / 1024) + " KB", 12f, Ui.MUTED))
+                    actions(
+                        "Share file" to {
+                            val uri = runCatching { rec.exportToDownloads(this@PanelActivity) }.getOrNull()
+                            if (uri != null) {
+                                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Send the app map"))
+                                note("Also saved in Downloads/NEXUS.")
+                            } else copy(f.readText().take(200_000))
+                        },
+                        "Preview" to { show(f.name, f.readText().take(6000)) },
+                    )
+                }
+            }
+        }
     }
 
     private fun tasks() {

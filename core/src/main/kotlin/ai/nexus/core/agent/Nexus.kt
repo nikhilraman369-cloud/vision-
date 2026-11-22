@@ -1334,12 +1334,15 @@ class Nexus(
         val pkg = cmd.app?.let { apps.resolve(it)?.packageName }
             ?: ctx.currentPackage?.takeIf { it == Packages.SPOTIFY || it == Packages.YT_MUSIC || it == Packages.YOUTUBE }
             ?: memory.preference("music app")?.let { apps.resolve(it)?.packageName }
+            ?: Packages.YT_MUSIC.takeIf { p -> apps.resolve("youtube music")?.packageName == p || apps.resolve("yt music")?.packageName == p }
         if (pkg == Packages.INSTAGRAM) return playOnInstagram(cmd.query)
-        // YouTube Music's "play from search" only opens its results page. Look the song up and open it directly: it starts playing.
-        if (pkg == Packages.YT_MUSIC) {
-            val id = runCatching { system.resolveVideoId(cmd.query) }.getOrNull()
+        // YouTube / YouTube Music: look it up and open it directly, which starts playing whatever screen the app is on
+        // (even if something else is already playing). Their search shortcuts only show results.
+        if (pkg == Packages.YOUTUBE || pkg == Packages.YT_MUSIC) {
+            val music = pkg == Packages.YT_MUSIC
+            val id = runCatching { system.resolveVideoId(cmd.query, music) }.getOrNull()
             if (id != null) {
-                val r = sys(system.openInApp("https://music.youtube.com/watch?v=$id", Packages.YT_MUSIC))
+                val r = sys(system.openInApp(if (music) "https://music.youtube.com/watch?v=$id" else "https://www.youtube.com/watch?v=$id", pkg))
                 if (r is Outcome.Success) {
                     when (waitForMusic(7000)) {
                         true, null -> { ctx.currentItem = "song: ${cmd.query}"; return Outcome.Success("Playing ${cmd.query}.") }
@@ -1350,6 +1353,7 @@ class Nexus(
             // Couldn't start it directly: carry on with the usual ways below (search shortcut, then tapping the result).
         }
         if (pkg == Packages.YOUTUBE) {
+            // Couldn't look it up: search in the app and open the first video.
             val r = runCommand(Command.Search(cmd.query, "YouTube"))
             if (r !is Outcome.Success) return r
             return runCommand(Command.OpenResult(1, "video"))

@@ -53,7 +53,7 @@ class NexusAccessibilityService : AccessibilityService() {
     private val cacheHandler = android.os.Handler(cacheThread.looper)
     private val refreshCache = Runnable {
         val v = changes.value
-        runCatching { takeSnapshot() }.getOrNull()?.let { cached = it to v }
+        runCatching { takeSnapshot() }.getOrNull()?.let { cached = it to v; if (ai.nexus.app.learn.AppMapRecorder.recording) ai.nexus.app.learn.AppMapRecorder.onScreen(it) }
     }
 
     /** The current screen: instant from the pre-built cache if nothing changed since, else read now. */
@@ -77,13 +77,15 @@ class NexusAccessibilityService : AccessibilityService() {
     private fun startListeningPill() {
         val app = NexusApp.get(this)
         pillScope.launch {
-            kotlinx.coroutines.flow.combine(app.voice.state, app.voice.partial, app.nexus.state, app.nexus.loop) { v, p, a, l -> listOf(v, p, a, l) }.collect { (v0, p0, a0, l0) ->
-                val v = v0 as ai.nexus.app.voice.VoiceState; val p = p0 as String; val a = a0 as ai.nexus.core.agent.AgentState; val loop = l0 as String?
+            kotlinx.coroutines.flow.combine(app.voice.state, app.voice.partial, app.nexus.state, app.nexus.loop, ai.nexus.app.learn.AppMapRecorder.count) { v, p, a, l, rc -> listOf(v, p, a, l, rc) }.collect { list ->
+                val v = list[0] as ai.nexus.app.voice.VoiceState; val p = list[1] as String; val a = list[2] as ai.nexus.core.agent.AgentState; val loop = list[3] as String?
+                val rec = list[4] as Int
                 val text = when {
                     v == ai.nexus.app.voice.VoiceState.HEARING -> "🎙  " + p.ifBlank { "Listening…" }
                     v == ai.nexus.app.voice.VoiceState.LISTENING -> "🎙  Listening… " + p
                     app.voice.inConversation() && a == ai.nexus.core.agent.AgentState.THINKING -> "✦  Thinking…"
                     loop != null -> "⟳  $loop · tap to stop"
+                    rec >= 0 -> "🗺  Learning screens · $rec saved · tap to stop"
                     else -> null
                 }
                 showPill(text?.trim())
@@ -106,7 +108,17 @@ class NexusAccessibilityService : AccessibilityService() {
             setPadding((18 * dp).toInt(), (10 * dp).toInt(), (18 * dp).toInt(), (10 * dp).toInt())
             background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 24 * dp; setColor(0xF0151526.toInt()); setStroke((2 * dp).toInt(), 0xFF00C2A8.toInt()) }
             maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.START
-            setOnClickListener { val a = NexusApp.get(this@NexusAccessibilityService); if (a.nexus.loop.value != null) a.nexus.stopLoop() else a.voice.stopListening() }
+            setOnClickListener {
+                val a = NexusApp.get(this@NexusAccessibilityService)
+                when {
+                    a.nexus.loop.value != null -> a.nexus.stopLoop()
+                    ai.nexus.app.learn.AppMapRecorder.recording -> {
+                        ai.nexus.app.learn.AppMapRecorder.stop()
+                        startActivity(android.content.Intent(this@NexusAccessibilityService, ai.nexus.app.ui.PanelActivity::class.java).putExtra("section", "appmap").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                    else -> a.voice.stopListening()
+                }
+            }
             val lp = android.view.WindowManager.LayoutParams(
                 android.view.WindowManager.LayoutParams.WRAP_CONTENT, android.view.WindowManager.LayoutParams.WRAP_CONTENT,
                 android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,

@@ -282,7 +282,7 @@ class V2Test {
     @Test fun youtubeMusicSongStartsPlayingDirectly() {
         val opened = ArrayList<String>()
         val phone = object : ScreenPhone() {
-            override suspend fun resolveVideoId(query: String) = "aBcDeFgHiJk"
+            override suspend fun resolveVideoId(query: String, music: Boolean) = "aBcDeFgHiJk"
             override suspend fun openInApp(url: String, packageName: String): ai.nexus.core.device.SysResult { opened += "$packageName|$url"; return ai.nexus.core.device.SysResult.Done("") }
             override suspend fun isMusicActive() = true
         }
@@ -290,5 +290,29 @@ class V2Test {
         run(n, "play Skyfall on YT Music")
         assertTrue(opened.any { it.contains("music.youtube.com/watch?v=aBcDeFgHiJk") }, opened.toString() + out)
         assertTrue(out.any { it.startsWith("Playing") }, out.toString())
+    }
+
+    @Test fun youtubeVideoStartsPlayingDirectlyEvenFromAnotherScreen() {
+        val opened = ArrayList<String>()
+        val musicFlags = ArrayList<Boolean>()
+        val phone = object : ScreenPhone() {
+            override suspend fun resolveVideoId(query: String, music: Boolean): String { musicFlags += music; return "zYxWvUtSrQp" }
+            override suspend fun openInApp(url: String, packageName: String): ai.nexus.core.device.SysResult { opened += "$packageName|$url"; return ai.nexus.core.device.SysResult.Done("") }
+            override suspend fun isMusicActive() = true
+        }.apply { foreground = "com.whatsapp" }
+        val (n, out, _) = setup(phone)
+        run(n, "play skyfall on youtube")
+        assertTrue(opened.any { it.startsWith("com.google.android.youtube|https://www.youtube.com/watch?v=zYxWvUtSrQp") }, opened.toString() + out)
+        assertEquals(listOf(false), musicFlags)
+        run(n, "play skyfall on YT Music")
+        assertEquals(true, musicFlags.last(), "YouTube Music looks up songs")
+    }
+
+    @Test fun screenDumpShowsStructureButNeverTypedText() {
+        val p = ChatListPhone().apply { open = "Mom"; draft = "secret draft" }
+        val snap = runBlocking { p.snapshot() }!!
+        val dump = ai.nexus.core.screen.ScreenDump.format(snap)
+        assertTrue(dump.contains("#entry") && dump.contains("EDIT") && dump.contains("desc=\"Send\"") && dump.contains("TAP"), dump)
+        assertTrue(!dump.contains("secret draft"), dump)
     }
 }
