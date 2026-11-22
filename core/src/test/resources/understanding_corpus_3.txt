@@ -1,0 +1,48 @@
+# Rough, casual speech.
+plz open 2nd vid => OpenResult(ordinal=2, kind=video)
+vid 2 chala => OpenResult(ordinal=2
+second wala video => OpenResult(ordinal=2, kind=video)
+2nd video pe click => OpenResult(ordinal=2, kind=video)
+next vid => NextItem
+agla video => NextItem
+scroll kr => Scroll(direction=DOWN
+scroll kar do => Scroll(direction=DOWN
+neeche kr => Scroll(direction=DOWN
+whatsapp kholna => OpenApp(app=whatsapp
+tap on rahul sharma => Tap(label=rahul sharma
+rahul sharma ka chat kholo => OpenChat(contact=rahul sharma || Tap(label=rahul sharma
+mom ki chat kholo => OpenChat(contact=mom
+open chat with priya => OpenChat(contact=priya
+priya ka chat => OpenChat(contact=priya || Tap(label=priya
+type kar hello => Write(text=hello
+hello likh => Write(text=hello
+bhej do => Submit
+send kar do => Submit
+wapas => Navigate(action=BACK
+back => Navigate(action=BACK
+piche => Navigate(action=BACK
+video roko => Media(key=PAUSE
+reel like kr => React(reaction=LIKE
+like kr do => React(reaction=LIKE
+follow kr do => React(reaction=FOLLOW
+isko save kr => React(reaction=SAVE
+comment kr nice => nice
+share kr do => Share
+volume full => SetLevel(level=VOLUME, percent=100
+awaaz kam => SetLevel(level=VOLUME
+mute => mute || SetLevel(level=VOLUME, percent=0 || Ringer
+torch on kr => SetToggle(setting=FLASHLIGHT, on=true
+wifi off kr => SetToggle(setting=WIFI, on=false
+last wali photo => OpenResult(ordinal=-1, kind=photo)
+open last photo => OpenResult(ordinal=-1, kind=photo)
+3 baar neeche => Scroll(direction=DOWN, times=3)
+2 reel aage => NextItem && NextItem
+upar wala kholo => OpenResult(ordinal=1
+sabse neeche wala chat => OpenResult(ordinal=-1, kind=chat)
+first wala gaana bajao => OpenResult(ordinal=1, kind=song)
+gaana roko => Media(key=PAUSE
+search kar cricket score => Search(query=cricket score
+cricket score dhundo => Search(query=cricket score
+yt pe sidhu moose wala search kr => Search(query=sidhu moose wala
+insta kholke reels dikha => OpenApp && GoTo(section=REELS
+youtube khol ke pehla video chala => OpenApp && OpenResult(ordinal=1, kind=video)

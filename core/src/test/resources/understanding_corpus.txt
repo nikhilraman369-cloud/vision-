@@ -1,0 +1,219 @@
+# phrase => expected substring(s) in the parsed steps (|| = alternatives, && = all must appear, in order)
+# Every phrase must also parse to concrete phone actions (never Chat/Agentic = "didn't understand").
+
+## Ordinal items on screen
+play the first video => OpenResult(ordinal=1, kind=video)
+play the second video => OpenResult(ordinal=2, kind=video)
+open 2nd video => OpenResult(ordinal=2, kind=video)
+play video number 3 => OpenResult(ordinal=3
+play the third one => OpenResult(ordinal=3
+the 3rd one => OpenResult(ordinal=3
+second video chalao => OpenResult(ordinal=2, kind=video)
+dusra video chalao => OpenResult(ordinal=2, kind=video)
+doosri video play karo => OpenResult(ordinal=2, kind=video)
+video 3 play karo => OpenResult(ordinal=3
+teesra video kholo => OpenResult(ordinal=3, kind=video)
+open the first short => OpenResult(ordinal=1, kind=short)
+pehla short kholo => OpenResult(ordinal=1, kind=short)
+play the second short => OpenResult(ordinal=2, kind=short)
+second shorts dikhao => OpenResult(ordinal=2, kind=short)
+open first reel => OpenResult(ordinal=1, kind=reel)
+click on the sixth contact => OpenResult(ordinal=6, kind=contact)
+tap the 6th contact => OpenResult(ordinal=6, kind=contact)
+6th contact pe click karo => OpenResult(ordinal=6, kind=contact)
+chhatha contact kholo => OpenResult(ordinal=6, kind=contact)
+open the group at the top => OpenResult(ordinal=1
+open the top group => OpenResult(ordinal=1
+open the group which is at the top => OpenResult(ordinal=1
+open the chat which is on top => OpenResult(ordinal=1
+sabse upar wala group kholo => OpenResult(ordinal=1
+upar wala chat kholo => OpenResult(ordinal=1
+open the topmost chat => OpenResult(ordinal=1
+open the first chat => OpenResult(ordinal=1, kind=chat)
+open the last chat => OpenResult(ordinal=-1
+last wala chat kholo => OpenResult(ordinal=-1
+open the bottom chat => OpenResult(ordinal=-1
+play the second last video => OpenResult(ordinal=-2
+open the second from last => OpenResult(ordinal=-2
+open the third result => OpenResult(ordinal=3
+tap the 4th item => OpenResult(ordinal=4
+select option 2 => OpenResult(ordinal=2
+choose the second option => OpenResult(ordinal=2
+play the first song => OpenResult(ordinal=1, kind=song)
+pehla gaana chalao => OpenResult(ordinal=1, kind=song)
+open the first email => OpenResult(ordinal=1
+open the first photo => OpenResult(ordinal=1
+pehli photo kholo => OpenResult(ordinal=1
+open the 10th video => OpenResult(ordinal=10, kind=video)
+play the twelfth video => OpenResult(ordinal=12, kind=video)
+click the 15th item => OpenResult(ordinal=15
+open number 5 => OpenResult(ordinal=5
+tap on the fifth one => OpenResult(ordinal=5
+fifth wala kholo => OpenResult(ordinal=5
+open the first notification => OpenResult(ordinal=1 || OpenLatestNotification
+open the first result => OpenResult(ordinal=1
+first result kholo => OpenResult(ordinal=1
+open the first group => OpenResult(ordinal=1
+second chat kholo => OpenResult(ordinal=2, kind=chat)
+teesri chat pe jao => OpenResult(ordinal=3, kind=chat)
+
+## Repetition
+scroll 3 times => Scroll(direction=DOWN, times=3)
+scroll down 3 times => Scroll(direction=DOWN, times=3)
+3 times scroll => Scroll(direction=DOWN, times=3)
+scroll down thrice => Scroll(direction=DOWN, times=3)
+teen baar scroll karo => Scroll(direction=DOWN, times=3)
+3 baar neeche scroll karo => Scroll(direction=DOWN, times=3)
+scroll up twice => Scroll(direction=UP, times=2)
+do baar upar scroll karo => Scroll(direction=UP, times=2)
+swipe up 2 times => Scroll(direction=DOWN, times=2)
+scroll down 5 times => Scroll(direction=DOWN, times=5)
+scroll down once => Scroll(direction=DOWN, times=1)
+scroll a little => Scroll(direction=DOWN
+scroll down a lot => Scroll(direction=DOWN, times=4)
+thoda neeche => Scroll(direction=DOWN
+thoda upar => Scroll(direction=UP
+neeche jao => Scroll(direction=DOWN
+upar jao => Scroll(direction=UP
+aur neeche => Scroll(direction=DOWN
+go back twice => Navigate(action=BACK, times=2)
+back 3 times => Navigate(action=BACK, times=3)
+press back two times => Navigate(action=BACK, times=2)
+2 baar back jao => Navigate(action=BACK, times=2)
+do baar peeche jao => Navigate(action=BACK, times=2)
+next 5 reels => NextItem && NextItem && NextItem && NextItem && NextItem
+skip 3 reels => NextItem && NextItem && NextItem
+3 reels aage => NextItem && NextItem && NextItem
+next video 2 times => NextItem && NextItem
+agla reel 3 baar => NextItem && NextItem && NextItem
+go to the next reel => NextItem
+previous reel => PreviousItem
+pichhla reel => PreviousItem
+
+## Chains
+open the group which is at the top and then type okay, I'll do it later => OpenResult(ordinal=1 && Write(text=okay, I'll do it later
+open the first chat and type hello => OpenResult(ordinal=1 && Write(text=hello
+open whatsapp, open the first chat and send hi => OpenApp(app=whatsapp && OpenResult(ordinal=1 && hi
+open youtube and play the second video => OpenApp(app=youtube && OpenResult(ordinal=2
+scroll down twice and open the third video => Scroll(direction=DOWN, times=2) && OpenResult(ordinal=3
+go back and open the second result => Navigate(action=BACK && OpenResult(ordinal=2
+open whatsapp then open the top chat then type see you => OpenApp && OpenResult(ordinal=1 && Write(text=see you
+youtube kholo aur pehla video chalao => OpenApp(app=youtube && OpenResult(ordinal=1
+whatsapp kholo phir upar wala chat kholo => OpenApp(app=whatsapp && OpenResult(ordinal=1
+
+## Tapping
+click on settings => Tap(label=settings
+tap the settings button => Tap(label=settings
+settings pe click karo => Tap(label=settings || OpenApp(app=settings
+press the like button => React(reaction=LIKE || Tap(label=like
+hit send => Submit || Tap(label=send
+tap the three dots => Tap(label=three dots || Tap(label=more options
+three dots pe click karo => Tap(label=three dots || Tap(label=more options
+tap top right => TapRegion(row=0, col=2
+click at the bottom => TapRegion(row=2
+tap the center => TapRegion(row=1, col=1
+double tap the screen => TapRegion(row=1, col=1, double=true
+long press the message => Tap(label=message, long=true
+tap on Rahul => Tap(label=rahul
+Rahul pe tap karo => Tap(label=rahul
+search bar pe click karo => Tap(label=search
+open the menu => Tap(label=menu
+
+## Typing
+type hello => Write(text=hello
+write hello => Write(text=hello
+hello type karo => Write(text=hello
+type okay, I'll do it later => Write(text=okay, I'll do it later
+likho main aa raha hoon => Write(text=main aa raha hoon
+send hi => hi
+send it => Submit
+send karo => Submit
+type see you tomorrow and send => Write(text=see you tomorrow && Submit
+
+## Apps
+open whatsapp => OpenApp(app=whatsapp
+whatsapp kholo => OpenApp(app=whatsapp
+wa kholo => OpenApp(app=wa || OpenApp(app=whatsapp
+insta khol => OpenApp(app=insta
+yt kholo => OpenApp(app=yt || OpenApp(app=youtube
+launch camera => OpenApp(app=camera || TakePhoto
+camera kholo => OpenApp(app=camera || TakePhoto
+open settings => OpenApp(app=settings || OpenSettings
+settings kholo => OpenApp(app=settings || OpenSettings
+gallery dikhao => OpenApp(app=gallery
+open chrome => OpenApp(app=chrome
+open calculator => OpenApp(app=calculator
+open play store => OpenApp(app=play store
+spotify chalao => OpenApp(app=spotify || Media(key=PLAY
+
+## Navigation
+go home => Navigate(action=HOME
+home pe jao => Navigate(action=HOME
+go back => Navigate(action=BACK
+wapas jao => Navigate(action=BACK
+peeche jao => Navigate(action=BACK
+open recents => Navigate(action=RECENTS
+take a screenshot => Navigate(action=SCREENSHOT
+lock the phone => Navigate(action=LOCK_SCREEN
+scroll to top => Scroll(direction=UP, times=10)
+scroll to the bottom => Scroll(direction=DOWN, times=10)
+sabse upar jao => Scroll(direction=UP, times=10)
+sabse neeche jao => Scroll(direction=DOWN, times=10)
+
+## Search
+search for cat videos => Search(query=cat videos
+cat videos search karo => Search(query=cat videos
+youtube pe cats search karo => Search(query=cats
+search cats on youtube => Search(query=cats, app=youtube || Search(query=cats, app=YouTube
+google pe weather dhundo => Search(query=weather
+
+## Toggles and levels
+turn on wifi => SetToggle(setting=WIFI, on=true
+wifi on karo => SetToggle(setting=WIFI, on=true
+bluetooth band karo => SetToggle(setting=BLUETOOTH, on=false
+torch jalao => SetToggle(setting=FLASHLIGHT, on=true
+flashlight off => SetToggle(setting=FLASHLIGHT, on=false
+turn on dnd => DO_NOT_DISTURB
+airplane mode on => AIRPLANE
+volume badhao => SetLevel(level=VOLUME
+volume 50 => SetLevel(level=VOLUME, percent=50
+brightness kam karo => SetLevel(level=BRIGHTNESS
+silent mode => Ringer(mode=silent
+
+## Media
+pause => Media(key=PAUSE || ControlTask(control=PAUSE
+pause the video => Media(key=PAUSE
+gaana roko => Media(key=PAUSE
+next song => Media(key=NEXT
+resume => Media(key=PLAY || ControlTask(control=RESUME
+skip 10 seconds => Seek(seconds=10
+forward 30 seconds => Seek(seconds=30
+play kesariya => PlayMedia(query=kesariya
+kesariya chalao => PlayMedia(query=kesariya
+
+## Calls and messages
+call mom => Call(contact=mom
+mom ko call karo => Call(contact=mom
+call him => Call(contact=__same_contact__
+message rahul hi => SendMessage(contact=rahul
+rahul ko bolo main aa raha hoon => SendMessage(contact=rahul
+whatsapp pe rahul ko message karo ki main late hoon => SendMessage(contact=rahul
+
+## Social
+like it => React(reaction=LIKE
+like this video => React(reaction=LIKE
+save this => React(reaction=SAVE
+subscribe => React(reaction=SUBSCRIBE
+open comments => OpenComments
+comment nice => nice
+share this => Share
+share this video to rahul => ShareTo(contact=rahul
+share this youtube video to rahul => ShareTo(contact=rahul
+next reel => NextItem
+reel aage karo => NextItem
+like karo => React(reaction=LIKE
+
+## Screen
+what's on my screen => DescribeScreen
+read this => ReadScreen
+screen pe kya hai => DescribeScreen

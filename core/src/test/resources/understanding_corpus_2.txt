@@ -1,0 +1,134 @@
+# Held-out set: written separately to check the rules generalise.
+can you please open the second video => OpenResult(ordinal=2, kind=video)
+open up the first video for me => OpenResult(ordinal=1, kind=video)
+i want to watch the third video => OpenResult(ordinal=3, kind=video)
+show me the 2nd short => OpenResult(ordinal=2, kind=short)
+play the 1st one => OpenResult(ordinal=1
+go to the third chat => OpenResult(ordinal=3, kind=chat)
+enter the first group => OpenResult(ordinal=1, kind=chat)
+open the chat at the very top => OpenResult(ordinal=1, kind=chat)
+top wala group kholo => OpenResult(ordinal=1, kind=chat)
+pehle wale chat pe jao => OpenResult(ordinal=1, kind=chat)
+click on the 6th person => OpenResult(ordinal=6
+tap on the second option => OpenResult(ordinal=2
+select the first item in the list => OpenResult(ordinal=1
+choose number 4 => OpenResult(ordinal=4
+open item number 7 => OpenResult(ordinal=7
+go to result 2 => OpenResult(ordinal=2
+result 2 kholo => OpenResult(ordinal=2
+open the first link => OpenResult(ordinal=1
+open the 2nd photo => OpenResult(ordinal=2, kind=photo)
+show the last photo => OpenResult(ordinal=-1, kind=photo)
+open the latest photo => OpenResult(ordinal=1, kind=photo)
+play the last video => OpenResult(ordinal=-1, kind=video)
+aakhri video chalao => OpenResult(ordinal=-1, kind=video)
+dusra wala kholo => OpenResult(ordinal=2
+teesre number wala video => OpenResult(ordinal=3, kind=video)
+play the fourth song => OpenResult(ordinal=4, kind=song)
+open the 3rd email => OpenResult(ordinal=3, kind=email)
+open the second message => OpenResult(ordinal=2, kind=message)
+scroll down three times => Scroll(direction=DOWN, times=3)
+scroll down 4 times please => Scroll(direction=DOWN, times=4)
+scroll 2 baar => Scroll(direction=DOWN, times=2)
+2 baar scroll => Scroll(direction=DOWN, times=2)
+swipe down twice => Scroll(direction=UP, times=2)
+swipe left => Scroll(direction=RIGHT
+scroll right => Scroll(direction=RIGHT
+thoda sa neeche => Scroll(direction=DOWN
+neeche scroll => Scroll(direction=DOWN
+upar scroll karo => Scroll(direction=UP
+scroll upar => Scroll(direction=UP
+scroll neeche => Scroll(direction=DOWN
+aur thoda neeche => Scroll(direction=DOWN
+scroll down => Scroll(direction=DOWN
+scroll up => Scroll(direction=UP
+go back 2 times => Navigate(action=BACK, times=2)
+wapas jao do baar => Navigate(action=BACK, times=2)
+back jao => Navigate(action=BACK
+skip 2 videos => NextItem && NextItem
+next 3 shorts => NextItem && NextItem && NextItem
+like the video => React(reaction=LIKE
+unlike it => React(reaction=LIKE, on=false
+save the reel => React(reaction=SAVE
+bookmark this => React(reaction=SAVE
+follow this account => React(reaction=FOLLOW
+unfollow => React(reaction=FOLLOW, on=false
+open whatsapp and go to the first chat and type hi there => OpenApp && OpenResult(ordinal=1 && Write(text=hi there
+open youtube search tum hi ho and play the first video => OpenApp && Search(query=tum hi ho && OpenResult(ordinal=1
+type hello world => Write(text=hello world
+write good morning everyone => Write(text=good morning everyone
+tap the like button => React(reaction=LIKE || Tap(label=like
+press the share button => Share || Tap(label=share
+click the send button => Submit || Tap(label=send
+tap on the search icon => Tap(label=search
+click the plus icon => Tap(label=plus
+tap on new chat => Tap(label=new chat
+open camera => OpenApp(app=camera || TakePhoto
+camera chalu karo => OpenApp(app=camera || TakePhoto
+open the camera app => OpenApp(app=camera || TakePhoto
+launch whatsapp => OpenApp(app=whatsapp
+start youtube => OpenApp(app=youtube
+whatsapp open karo => OpenApp(app=whatsapp
+youtube chalao => OpenApp(app=youtube
+instagram pe jao => OpenApp(app=instagram
+go to instagram => OpenApp(app=instagram
+turn up the volume => SetLevel(level=VOLUME
+volume up => SetLevel(level=VOLUME
+volume kam karo => SetLevel(level=VOLUME
+awaaz badhao => SetLevel(level=VOLUME
+brightness full => SetLevel(level=BRIGHTNESS, percent=100
+brightness 30 => SetLevel(level=BRIGHTNESS, percent=30
+wifi band => SetToggle(setting=WIFI, on=false
+bluetooth chalu karo => SetToggle(setting=BLUETOOTH, on=true
+turn off bluetooth => SetToggle(setting=BLUETOOTH, on=false
+go to home screen => Navigate(action=HOME
+home jao => Navigate(action=HOME || GoTo(section=HOME
+recent apps dikhao => Navigate(action=RECENTS
+show notifications => Navigate(action=NOTIFICATIONS || ReadNotifications
+open notification panel => Navigate(action=NOTIFICATIONS
+screenshot lo => Navigate(action=SCREENSHOT
+screenshot le lo => Navigate(action=SCREENSHOT
+call papa => Call(contact=papa
+papa ko phone lagao => Call(contact=papa
+call 9876543210 => Call(contact=null, number=9876543210 || Call(contact=9876543210
+send good night to rahul on whatsapp => SendMessage(contact=rahul
+message mom i will be late => SendMessage(contact=mom
+play arijit singh songs => PlayMedia(query=arijit singh
+play tum hi ho on spotify => PlayMedia(query=tum hi ho, app=spotify
+spotify pe tum hi ho chalao => PlayMedia(query=tum hi ho
+pause it => Media(key=PAUSE || ControlTask(control=PAUSE
+stop the music => Media(key=PAUSE
+resume the video => Media(key=PLAY
+next track => Media(key=NEXT
+search for momos near me => Search(query=momos near me
+search pizza on zomato => Search(query=pizza, app=zomato
+set an alarm for 6 am => SetAlarm(hour=6
+6 baje ka alarm lagao => SetAlarm(hour=6
+timer for 5 minutes => SetTimer(seconds=300
+5 minute ka timer lagao => SetTimer(seconds=300
+read my notifications => ReadNotifications
+read the screen => ReadScreen
+click on the first video and like it => OpenResult(ordinal=1, kind=video) && React(reaction=LIKE
+scroll down and click on the 2nd video => Scroll(direction=DOWN && OpenResult(ordinal=2, kind=video)
+open settings and turn on wifi => SetToggle(setting=WIFI, on=true
+whatsapp kholo aur rahul ko message karo ki aa raha hoon => OpenApp(app=whatsapp && SendMessage(contact=rahul
+youtube pe arijit singh search karo => Search(query=arijit singh
+insta pe reels dikhao => GoTo(section=REELS
+open reels => GoTo(section=REELS
+shorts kholo => GoTo(section=SHORTS
+go to my profile => GoTo(section=PROFILE
+open the comments => OpenComments
+comments kholo => OpenComments
+comment wow amazing => wow amazing
+reply thank you => thank you
+copy this => Copy
+paste here => Paste
+share this reel => Share
+send this to mom => ShareTo(contact=mom
+ye rahul ko bhejo => ShareTo(contact=rahul
+lock the screen => Navigate(action=LOCK_SCREEN
+turn on torch => SetToggle(setting=FLASHLIGHT, on=true
+flashlight band karo => SetToggle(setting=FLASHLIGHT, on=false
+dnd off => DO_NOT_DISTURB, on=false
+vibrate mode => Ringer(mode=vibrate
+open chrome and search weather => OpenApp(app=chrome && Search(query=weather

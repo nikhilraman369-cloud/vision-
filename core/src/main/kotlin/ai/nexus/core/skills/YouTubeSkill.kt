@@ -101,7 +101,7 @@ class YouTubeSkill : AppSkill {
             list = (list + cards(snap, wantShort)).distinctBy { it.contentDescription ?: it.allText() }
             tries++
         }
-        val target = (if (cmd.ordinal < 0) list.lastOrNull() else list.getOrNull(cmd.ordinal - 1))
+        val target = (if (cmd.ordinal < 0) list.getOrNull(list.size + cmd.ordinal) else list.getOrNull(cmd.ordinal - 1))
             ?: return Outcome.NeedsAgent("I couldn't find ${if (wantShort) "Short" else "video"} number ${cmd.ordinal}.")
         val fresh = env.ops.current() ?: snap
         val node = fresh.nodes.firstOrNull { it.contentDescription != null && it.contentDescription == target.contentDescription } ?: target

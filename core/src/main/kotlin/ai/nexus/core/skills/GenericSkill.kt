@@ -165,11 +165,29 @@ class GenericSkill : AppSkill {
         return Outcome.Success()
     }
 
+    /** Rows that aren't real list items: search boxes, "Archived", "Ask Meta AI…", ads. */
+    private fun isChrome(n: ai.nexus.core.screen.UiNode): Boolean {
+        val t = n.allText().trim().lowercase()
+        return t.contains("sponsored") || t.startsWith("search") || t.contains("ask meta ai") || t == "archived" || t.startsWith("archived ") ||
+            (t.length < 30 && (t.contains("search") || n.viewId?.contains("search", true) == true))
+    }
+
     private suspend fun openResult(cmd: Command.OpenResult, s: ScreenSnapshot, env: SkillEnv): Outcome {
-        val items = ElementFinder(s).listItems()
-            .filterNot { it.allText().contains("sponsored", true) }
-        val target = (if (cmd.ordinal < 0) items.lastOrNull() else items.getOrNull(cmd.ordinal - 1))
+        var snap = s
+        var items = ElementFinder(snap).listItems().filterNot(::isChrome)
+        // "the 8th contact" when only 6 are visible: scroll and keep counting (no duplicates).
+        var tries = 0
+        while (cmd.ordinal > items.size && tries < 4) {
+            val (moved, after) = env.ops.scrollAndWait(Direction.DOWN)
+            if (!moved || after == null) break
+            snap = after
+            items = (items + ElementFinder(snap).listItems().filterNot(::isChrome)).distinctBy { it.allText().trim() }
+            tries++
+        }
+        val wanted = if (cmd.ordinal < 0) items.getOrNull(items.size + cmd.ordinal) else items.getOrNull(cmd.ordinal - 1)
+        val target = wanted?.let { w -> (env.ops.current() ?: snap).nodes.firstOrNull { it.allText().trim() == w.allText().trim() && it.bounds.area > 0 }?.let { n -> (env.ops.current() ?: snap).clickableTarget(n) } ?: w }
             ?: return Outcome.NeedsAgent("I couldn't find item ${cmd.ordinal} in a list here.")
+        val s = env.ops.current() ?: snap
         env.ctx.currentItem = target.allText().take(100)
         env.ops.tapReliably(target, s) ?: return Outcome.Failed("It didn't open.")
         return Outcome.Success()

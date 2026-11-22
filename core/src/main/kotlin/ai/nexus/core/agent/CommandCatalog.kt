@@ -8,6 +8,7 @@ import ai.nexus.core.nlu.Fuzzy
  */
 object CommandCatalog {
     val sections: List<Pair<String, List<String>>> = listOf(
+        "WHAT'S ON SCREEN (by position)" to listOf("Play the second video", "Open the group at the top", "Click on the sixth contact", "Open the second last chat", "Sabse upar wala chat kholo", "Teesri video chalao", "Open number 4", "Scroll 3 times", "Teen baar neeche scroll karo", "Go back twice", "Next 5 reels", "Open the top chat and type okay, I'll do it later"),
         "KEEP GOING · LATER · SCHEDULE" to listOf("Keep scrolling up", "Scroll down slowly", "Faster", "Slower", "Stop", "Scroll the reel after 15 seconds", "After 10 minutes turn off wifi", "Call mom in 5 minutes", "At 9 pm message Rahul saying happy birthday", "Kal subah 9 baje Rahul ko message karo ki meeting hai", "What have I scheduled", "Cancel the scheduled message to Rahul"),
         "ASK ME ANYTHING (tap the N or the quick-settings tile)" to listOf("Can you talk to me?", "Explain GST in simple words", "What is depreciation?", "Give me a quick pep talk", "How do I prepare for CA Inter audit?"),
         "ON ANY SCREEN" to listOf("What's on my screen", "Read this page", "Tap Settings", "Open the second result", "Scroll down", "Go back", "Tap top right", "Double tap center", "Send this to Arjun"),

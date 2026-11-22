@@ -46,7 +46,9 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(it, normalized, 0.95)))
         }
 
-        val clauses = CommandSplitter.split(normalized)
+        val clauses = CommandSplitter.split(
+            normalized.replace(Regex("\\s+(?:kholke|khol ke|khol kar|kholkar|open karke|open kar ke|open krke)\\s+", RegexOption.IGNORE_CASE), " kholo phir "),
+        )
         val steps = ArrayList<ParsedStep>()
         var appContext: String? = null
         for (clause in clauses) {
@@ -111,7 +113,8 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
 
     private fun isMessageText(text: String): Boolean = parse(text).steps.any { it.command is Command.SendMessage || it.command is Command.Write || it.command is Command.Email }
 
-    fun parseClause(c: String, appContext: String? = null, depth: Int = 0): List<Command> {
+    fun parseClause(c0: String, appContext: String? = null, depth: Int = 0): List<Command> {
+        val c = if (depth == 0) casual(c0) else c0
         controlOnly(c)?.let { return listOf(it) }
 
         // Corrections: "open the second result instead", "no, the other one"
@@ -139,23 +142,245 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
             val r = parseClause(en, appContext, depth + 1)
             if (r.none { it is Command.Agentic || it is Command.Chat }) return r
         }
+        // Casual verb endings: "torch on kr", "like kr do", "scroll kr" → without them.
+        if (depth == 0) {
+            val trimmed = CASUAL_TAIL.replace(c, "").trim()
+            if (trimmed != c && trimmed.isNotBlank()) {
+                val r = parseClause(trimmed, appContext, 1)
+                if (r.isNotEmpty() && r.none { it is Command.Agentic || it is Command.Chat }) return r
+                Canonicalizer.toEnglish(trimmed)?.let { en -> val r2 = parseClause(en, appContext, 1); if (r2.isNotEmpty() && r2.none { it is Command.Agentic || it is Command.Chat }) return r2 }
+            }
+        }
         return listOf(fallback(c))
+    }
+
+    private val CASUAL_TAIL = Regex("\\s+(?:kr do|kar do|krdo|kardo|kr de|kar de|kr dena|kar dena|kr|kar|karo|kro|karna|krna)$", RegexOption.IGNORE_CASE)
+    private val CASUAL_WORDS = mapOf("vid" to "video", "vids" to "videos", "vdo" to "video", "plz" to "", "pls" to "", "plss" to "", "pic" to "photo", "pics" to "photos",
+        "yt" to "youtube", "msg" to "message", "bhai" to "", "yaar" to "", "yr" to "", "bro" to "", "kr" to "kar", "krdo" to "kar do", "kro" to "karo")
+
+    /** Casual speech → plain words ("plz open 2nd vid" → "open 2nd video"). Text meant to be typed is left alone. */
+    private fun casual(c: String): String {
+        val repairTyping = rx("^(?:type|write|likh|likho|search|send|comment|bhej) (?:kar|kr|karo|kro|kar do) ").containsMatchIn(c)
+        if (PAYLOAD_START.containsMatchIn(c) && !repairTyping) return c
+        var t = " " + c.trim() + " "
+        if (!repairTyping) for ((a, b) in CASUAL_WORDS) t = t.replace(Regex(" ${Regex.escape(a)}(?= )", RegexOption.IGNORE_CASE), if (b.isEmpty()) "" else " $b")
+        t = t.replace(Regex("\\s+"), " ").trim()
+        // "type kar hello", "search kar cricket score" → "type hello", "search cricket score"
+        t = rx("^(type|write|likh|likho|search|send|comment|bhej) (?:kar|kr|karo|kro|kar do) (.+)$").replace(t) { m -> "${m.groupValues[1]} ${m.groupValues[2]}" }
+        return t.ifBlank { c }
     }
 
     private fun fallback(c: String): Command {
         val lower = c.lowercase()
         val looksLikeQuestion = QUESTION.containsMatchIn(lower) || lower.endsWith("?") || CONVERSATION.containsMatchIn(lower)
         val mentionsPhone = PHONE_WORDS.containsMatchIn(lower) || lower.split(' ').any { isKnownApp(it) }
+        // NEXUS is a phone assistant: anything that isn't a question or small talk is treated as something to DO
+        // (it is then matched against the screen), never as chat.
         return when {
             looksLikeQuestion && !mentionsPhone -> Command.Chat(c)
-            mentionsPhone -> Command.Agentic(c)
-            lower.split(' ').size <= 2 -> Command.Agentic(c)
-            else -> Command.Chat(c)
+            else -> Command.Agentic(c)
         }
     }
 
+    // ================================================================ screen grammar
+    // Generic, pattern-based understanding of how people refer to things on screen and repeat actions,
+    // in English, Hindi and Hinglish word order. These run before the specific rules.
+
+    private val COUNT = "(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|ek|do|teen|char|chaar|paanch|panch|chhe|che|saat|aath|nau|das)"
+    private val COUNT_UNIT = "(?:times?|baar|bar|dafa|daffa|martaba)"
+
+    /** "scroll 3 times", "teen baar scroll karo", "go back twice", "next 5 reels", "3 reels aage". */
+    private fun counted(c: String, ctx: String?): List<Command>? {
+        (rx("^(?:next|skip|agle|agla|agli|aage|move|go|jump)(?: ahead)? $COUNT (reels?|videos?|shorts?|posts?|stories|story|songs?|tracks?|gaane|gaana)(?: (?:aage|skip|forward|ahead))?(?: (?:karo|kar do|jao|badhao))?$").matchEntire(c)
+            ?: rx("^$COUNT (reels?|videos?|shorts?|posts?|stories|story|songs?|tracks?|gaane|gaana) (?:aage|skip|next|forward|ahead|aage karo|skip karo|aage badhao|aage jao|aage kar do)$").matchEntire(c))
+            ?.let { m ->
+                val n = (Numbers.parse(m.groupValues[1]) ?: 1).coerceIn(1, 20)
+                val songs = m.groupValues[2].lowercase().let { it.startsWith("song") || it.startsWith("track") || it.startsWith("gaan") }
+                return List(n) { if (songs) Command.Media(MediaKey.NEXT) else Command.NextItem }
+            }
+        val trailing = rx("^(.+?)\\s+(?:$COUNT\\s*$COUNT_UNIT|(twice|thrice|once))$").matchEntire(c)
+        val leading = rx("^(?:$COUNT\\s*$COUNT_UNIT|(twice|thrice))\\s+(.+)$").matchEntire(c)
+        val (inner, nText, word) = when {
+            trailing != null -> Triple(trailing.groupValues[1], trailing.groupValues[2], trailing.groupValues[3])
+            leading != null -> Triple(leading.groupValues[3], leading.groupValues[1], leading.groupValues[2])
+            else -> return null
+        }
+        val n = when (word.lowercase()) { "twice" -> 2; "thrice" -> 3; "once" -> 1; else -> Numbers.parse(nText) ?: return null }.coerceIn(1, 20)
+        val cmds = parseClause(inner.trim(), ctx, 1)
+        if (cmds.isEmpty() || cmds.any { it is Command.Chat || it is Command.Agentic || it is Command.SendMessage || it is Command.Call || it is Command.Email || it is Command.ShareTo || it is Command.Write }) return null
+        if (cmds.size == 1) when (val one = cmds[0]) {
+            is Command.Scroll -> return listOf(one.copy(times = n))
+            is Command.Navigate -> return listOf(one.copy(times = n))
+            else -> {}
+        }
+        return List(n) { cmds }.flatten().take(40)
+    }
+
+    private val REF_VERB = setOf(
+        "open", "play", "tap", "click", "press", "select", "choose", "watch", "pick", "show", "view", "start", "enter", "go", "to", "into", "on",
+        "kholo", "khol", "chalao", "chala", "dikhao", "dikha", "bajao", "lagao", "karo", "kar", "de", "dena", "jao", "chalo", "please", "pls", "me",
+        "can", "you", "could", "just", "now", "check", "see", "read", "up", "for", "i", "want", "wanna", "let", "lets", "let's", "us", "kindly", "quickly",
+    )
+    private val REF_FILLER = setOf("the", "a", "an", "which", "that", "is", "at", "of", "from", "in", "list", "wala", "wali", "wale", "vala", "vali", "vale",
+        "waala", "waali", "waale", "ko", "pe", "par", "mein", "se", "sabse", "here", "screen", "this", "page", "my", "one", "ones", "number", "no", "no.", "jo", "hai", "there")
+    private val REF_KIND = mapOf(
+        "video" to "video", "videos" to "video", "short" to "short", "shorts" to "short", "reel" to "reel", "reels" to "reel",
+        "song" to "song", "songs" to "song", "gaana" to "song", "gana" to "song", "gaane" to "song", "track" to "song", "tracks" to "song",
+        "contact" to "contact", "contacts" to "contact", "chat" to "chat", "chats" to "chat", "conversation" to "chat", "group" to "chat", "groups" to "chat",
+        "message" to "message", "messages" to "message", "email" to "email", "emails" to "email", "mail" to "email", "mails" to "email",
+        "photo" to "photo", "photos" to "photo", "picture" to "photo", "pictures" to "photo", "pic" to "photo", "pics" to "photo", "image" to "photo", "images" to "photo",
+        "post" to "post", "posts" to "post", "notification" to "notification", "notifications" to "notification", "story" to "story", "stories" to "story",
+        "person" to "contact", "people" to "contact", "name" to "contact",
+        "channel" to "channel", "account" to "account", "profile" to "profile", "playlist" to "playlist",
+        "result" to "", "results" to "", "item" to "", "items" to "", "option" to "", "options" to "", "entry" to "", "row" to "", "link" to "", "links" to "",
+    )
+
+    /**
+     * "play the second video", "click on the sixth contact", "open the group at the top", "sabse upar wala chat kholo",
+     * "second last video", "video number 3", "fifth wala kholo" → OpenResult(n, kind). Only fires when every word is
+     * part of the reference (verb, position, kind, filler), so it can't swallow other commands.
+     */
+    private fun refs(c: String, ctx: String?): List<Command>? {
+        var t = " " + c.lowercase().replace(Regex("[,.!?]"), " ").replace(Regex("\\s+"), " ").trim() + " "
+        var ordinal: Int? = null
+        fun take(p: String, value: Int): Boolean { val r = Regex(p); return if (r.containsMatchIn(t)) { t = r.replace(t, " "); ordinal = ordinal ?: value; true } else false }
+        // Multi-word positions first.
+        take(" (?:second|2nd|doosra|dusra|doosri|dusri) (?:last|from (?:the )?(?:last|bottom|end)) | last se (?:doosra|dusra|doosri|dusri|second) ", -2)
+        take(" (?:third|3rd|teesra|teesri) (?:last|from (?:the )?(?:last|bottom|end)) ", -3)
+        var fromPosition = false
+        var namedByWala = false
+        if (take(" (?:upar|top|sabse upar|sab se upar) (?:wala|wali|vala|vali|wale|waala|waali) ", 1)) namedByWala = true
+        if (take(" (?:neeche|niche|bottom|sabse neeche|sab se neeche|sabse niche|last|aakhri) (?:wala|wali|vala|vali|wale|waala|waali) ", -1)) namedByWala = true
+        if (take(" (?:(?:at|on|in) (?:the )?(?:very )?top|top ?most|sabse upar|sab se upar) ", 1)) fromPosition = true
+        if (take(" (?:(?:at|on|in) (?:the )?(?:very )?bottom|bottom ?most|sabse neeche|sab se neeche|sabse niche) ", -1)) fromPosition = true
+        Regex(" (?:number|no\\.?|#) ?(\\d+) ").find(t)?.let { m -> if (ordinal == null) { ordinal = m.groupValues[1].toInt(); t = t.replace(m.value, " ") } }
+        var kind: String? = null
+        var sawNoun = false
+        var sawVerb = false
+        var bareNumber: Int? = null
+        for (w in t.trim().split(' ').filter { it.isNotBlank() }) {
+            val ord = Numbers.ordinal(w)
+            when {
+                ord != null -> { if (ordinal == null) ordinal = ord else return null }
+                w in setOf("latest", "newest", "recent", "upar", "top") -> { if (ordinal == null) { ordinal = 1; fromPosition = true } }
+                w in setOf("bottom", "neeche", "niche") -> { if (ordinal == null) { ordinal = -1; fromPosition = true } }
+                REF_KIND.containsKey(w) -> { if (kind == null) kind = REF_KIND[w]; sawNoun = true }
+                w.toIntOrNull() != null -> { if (bareNumber != null) return null; bareNumber = w.toInt() }
+                w in REF_VERB -> sawVerb = true
+                w in REF_FILLER -> { if (w == "one" || w.startsWith("wa") || w.startsWith("va")) sawNoun = true }
+                else -> return null
+            }
+        }
+        if (ordinal == null && bareNumber != null && (sawNoun || sawVerb)) ordinal = bareNumber else if (bareNumber != null) return null
+        val n = ordinal ?: return null
+        if (n == 0 || !(sawNoun || sawVerb || namedByWala)) return null
+        if (fromPosition && kind == null && !sawNoun && !namedByWala) return null   // "upar jao" = scroll, "click at the bottom" = screen area
+        val k = kind?.takeIf { it.isNotEmpty() }
+        if (k == "notification" && n == 1) return listOf(Command.OpenLatestNotification)
+        return listOf(Command.OpenResult(n, k))
+    }
+
+    /** Hindi/Hinglish word orders and shapes that the English rules below would misread. */
+    private fun hinglish(c: String, ctx: String?): List<Command>? {
+        // "whatsapp kholo", "insta khol de", "camera chalu karo" → open the app (never a message to "kholo").
+        rx("^(.+?)(?: app)? (?:kholo|khol do|khol de|kholiye|khol|kholna|open karo|open kar do|open kardo|chalu karo|chalu kar do|start karo|launch karo|pe jao|par jao)$").matchEntire(c)?.let { m ->
+            val name = stripArticles(m.groupValues[1].trim())
+            if (isKnownApp(name)) return listOf(Command.OpenApp(name))
+        }
+        // "settings pe click karo", "search bar par tap karo", "Rahul pe tap karo", "like button dabao"
+        // "press back", "back button dabao" → the back key, not a button called "back"
+        if (rx("^(?:press|hit|tap|click)(?: on)? (?:the )?back(?: button| key)?$|^back (?:button )?(?:dabao|daba do)$").matches(c)) return listOf(Command.Navigate(GlobalAction.BACK))
+        (rx("^(?:the )?(.+?) (?:pe|par|per|ko) (?:click|tap|press|touch)(?: karo| kar do| kardo| kariye| kar)?$").matchEntire(c)
+            ?: rx("^(?:the )?(.+?) (?:dabao|daba do|daba de)$").matchEntire(c))
+            ?.let { m ->
+                val label = m.groupValues[1].trim().removeSuffix(" button").removeSuffix(" icon").trim()
+                if (label.isNotBlank()) return refs("open $label", ctx) ?: listOf(Command.Tap(label))
+            }
+        // "google pe weather dhundo", "youtube par cats search karo"
+        rx("^(.+?) (?:pe|par|mein|me) (.+?) (?:search karo|search kar do|search kardo|search kar|search|dhundo|dhoondo|dhundho|dhundh do|dhoond do|khojo|dhundhna)$").matchEntire(c)?.let { m ->
+            val app = m.groupValues[1].trim().let { if (it == "yt") "youtube" else it }
+            if (isKnownApp(app) || app in setOf("google", "youtube", "insta", "instagram", "chrome")) return listOf(Command.Search(m.groupValues[2].trim(), app))
+        }
+        rx("^(.+?) (?:search karo|search kar do|search kardo|dhundo|dhoondo|dhundho|dhundh do|dhoond do|khojo)$").matchEntire(c)?.let { m ->
+            return listOf(Command.Search(m.groupValues[1].trim()))
+        }
+        // "rahul ko bolo main aa raha hoon", "mom ko batao ki ghar aa raha hoon"
+        rx("^(?:(whatsapp|insta|instagram|telegram|sms) (?:pe|par|mein|me|se) )?(.+?) ko (?:bolo|bol do|bol de|batao|bata do|bata de|keh do|kaho|message karo|message kar do|msg karo|msg kar do|text karo|likh do|likho|bhejo|bhej do)(?: ki| ke)? (.+)$").matchEntire(c)?.let { m ->
+            val who = m.groupValues[2].trim()
+            if (who.split(' ').size <= 3) return listOf(Command.SendMessage(who, m.groupValues[3].trim(), m.groupValues[1].takeIf { it.isNotBlank() }?.let { if (it.startsWith("insta")) "Instagram" else it.replaceFirstChar { ch -> ch.uppercase() } }))
+        }
+        // "whatsapp pe rahul ko call karo" / "whatsapp pe ..." → the rest, on that app
+        rx("^(whatsapp|insta|instagram|telegram) (?:pe|par|mein|me|se) (.+)$").matchEntire(c)?.let { m ->
+            val app = if (m.groupValues[1].startsWith("insta")) "Instagram" else m.groupValues[1].replaceFirstChar { it.uppercase() }
+            val inner = parseClause(m.groupValues[2], app, 1)
+            if (inner.size == 1) when (val one = inner[0]) {
+                is Command.SendMessage -> return listOf(one.copy(app = one.app ?: app))
+                is Command.OpenChat -> return listOf(one.copy(app = one.app ?: app))
+                is Command.Search -> return listOf(one.copy(app = one.app ?: app))
+                else -> {}
+            }
+        }
+        // Scrolling in Hindi: "neeche jao", "thoda upar", "aur neeche", "sabse upar jao", "neeche karo"
+        rx("^(?:sabse|sab se) (upar|uppar|neeche|niche)(?: (?:jao|chalo|karo|scroll karo|le jao))?$").matchEntire(c)?.let { m ->
+            return listOf(Command.Scroll(if (m.groupValues[1].startsWith("u")) Direction.UP else Direction.DOWN, 10))
+        }
+        rx("^(?:(?:thoda|thodi|thode|sa|si|se|aur|or|zara|bas|ek baar|jara) )*(upar|uppar|neeche|niche)(?: (?:jao|chalo|karo|kar do|scroll karo|scroll|le jao|aao|karna))?$").matchEntire(c)?.let { m ->
+            return listOf(Command.Scroll(if (m.groupValues[1].startsWith("u")) Direction.UP else Direction.DOWN))
+        }
+        rx("^(?:scroll|swipe) (?:(?:thoda|aur|zara) )*(upar|uppar|neeche|niche)(?: (?:karo|kar do|jao))?$").matchEntire(c)?.let { m ->
+            return listOf(Command.Scroll(if (m.groupValues[1].startsWith("u")) Direction.UP else Direction.DOWN))
+        }
+        // "spotify pe tum hi ho chalao", "youtube par kesariya bajao" (app first, then the song)
+        rx("^(spotify|youtube music|yt music|youtube|gaana|jiosaavn|wynk|insta|instagram) (?:pe|par|mein|me) (.+?) (?:chalao|chala do|bajao|baja do|play karo|play kar do|sunao|suna do|laga do|lagao)$").matchEntire(c)?.let { m ->
+            val app = m.groupValues[1].let { if (it.startsWith("insta")) "Instagram" else it }
+            return listOf(Command.PlayMedia(m.groupValues[2].trim(), app))
+        }
+        // "isko save", "reel like", "ye video like karo" → the reaction on what's on screen
+        rx("^(?:(?:ye|yeh|is|isko|ise|iss|this|that|it) )?(?:(?:reel|video|post|short|photo|song|pic) )?(?:ko )?(like|unlike|dislike|save|unsave|follow|unfollow|subscribe|unsubscribe|share)(?: (?:karo|kar do|kar|kardo))?$").matchEntire(c)?.let { m ->
+            if (c.trim().contains(' ')) {
+                val r = parseClause(m.groupValues[1], ctx, 1)
+                if (r.isNotEmpty() && r.none { it is Command.Agentic || it is Command.Chat }) return r
+            }
+        }
+        // "hello likh", "hello likh do" → type it
+        rx("^(.+?) (?:likh|likh do|likh de|likho)$").matchEntire(c)?.let { m -> return listOf(Command.Write(m.groupValues[1].trim(), false)) }
+        // "awaaz kam", "volume zyada", "brightness full"
+        rx("^(awaaz|awaz|aawaz|volume|sound|brightness|roshni) (kam|zyada|jyada|badha|badhao|ghatao|ghata|tez|dheemi|dheere|kam kar|kam karo|full|poori|puri|zero|band)$").matchEntire(c)?.let { m ->
+            val lvl = if (m.groupValues[1].startsWith("b") || m.groupValues[1].startsWith("r")) Level.BRIGHTNESS else Level.VOLUME
+            return listOf(when (m.groupValues[2]) {
+                "full", "poori", "puri" -> Command.SetLevel(lvl, 100, null)
+                "zero", "band" -> Command.SetLevel(lvl, 0, null)
+                "zyada", "jyada", "badha", "badhao", "tez" -> Command.SetLevel(lvl, null, 20)
+                else -> Command.SetLevel(lvl, null, -20)
+            })
+        }
+        // "peeche jao" (Hindi for back)
+        if (rx("^(?:peeche|piche|pichhe|peechhe) (?:jao|chalo|karo|aao|ja)$").matches(c)) return listOf(Command.Navigate(GlobalAction.BACK))
+        // "10 second aage karo", "skip 10 seconds", "30 second peeche"
+        rx("^(?:skip|aage|forward) (\\d+) ?(seconds?|secs?|second|minutes?|mins?|minute)(?: aage)?(?: (?:karo|kar do|jao))?$").matchEntire(c)
+            ?.let { m -> val mult = if (m.groupValues[2].startsWith("m")) 60 else 1; return listOf(Command.Seek(m.groupValues[1].toInt() * mult, true)) }
+        rx("^(\\d+) ?(seconds?|secs?|second|minutes?|mins?|minute) (aage|peeche|piche|pichhe|back|forward)(?: (?:karo|kar do|jao))?$").matchEntire(c)?.let { m ->
+            val mult = if (m.groupValues[2].startsWith("m")) 60 else 1
+            val sign = if (m.groupValues[3] in setOf("aage", "forward")) 1 else -1
+            return listOf(Command.Seek(sign * m.groupValues[1].toInt() * mult, true))
+        }
+        // "reel aage karo", "video aage", "agla reel" handled elsewhere
+        if (rx("^(?:reel|reels|video|short|shorts|post|story)? ?(?:aage|agla|agli|agle)(?: (?:karo|kar do|badhao|jao|wala|dikhao))?$").matches(c) && c.trim().contains(' ')) return listOf(Command.NextItem)
+        // "share this youtube video to rahul" → drop the app word
+        rx("^(share|send|forward) (this|that|the|ye|yeh) (?:youtube|yt|insta|instagram|whatsapp) (.+)$").matchEntire(c)?.let { m ->
+            return parseClause("${m.groupValues[1]} ${m.groupValues[2]} ${m.groupValues[3]}", ctx, 1).takeIf { r -> r.none { it is Command.Agentic || it is Command.Chat } }
+        }
+        // "scroll down a lot" / "scroll a lot"
+        rx("^(?:scroll|swipe)(?: (up|down))? (?:a lot|lots|bahut|bohot|zyada|much more|a long way)$").matchEntire(c)?.let { m ->
+            return listOf(Command.Scroll(if (m.groupValues[1] == "up") Direction.UP else Direction.DOWN, 4))
+        }
+        // "double tap the screen", "double tap"
+        if (rx("^double ?(?:tap|click)(?: on)?(?: the)?(?: screen| it| this)?$").matches(c)) return listOf(Command.TapRegion(1, 1, double = true))
+        return null
+    }
+
     private val rules: List<(String, String?) -> List<Command>?> = listOf(
-        ::life, ::extras, ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
+        ::counted, ::refs, ::hinglish, ::life, ::extras, ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
         ::messaging, ::calls, ::toggles, ::levels, ::settings, ::notifications, ::files, ::media, ::results,
         ::sections, ::search, ::sendText, ::write, ::tap, ::misc, ::memory, ::url, ::openApp,
     )
@@ -300,6 +525,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     private val noSend = rx("[,\\s]*(?:but |and )?(?:don'?t|do not|dont) (?:send|post)(?: it)?(?: yet| now| right now)?$|[,\\s]*(?:as a draft|abhi mat bhejo|mat bhejna|bhejna mat|send mat karna)$")
 
     private fun messaging(c: String, ctx: String?): List<Command>? {
+        if (rx("^(?:tap|click|press|touch|select|hit)\\b").containsMatchIn(c)) return null
         var s = c
         var send = true
         noSend.find(s)?.let { send = false; s = s.removeRange(it.range).trim() }
@@ -542,11 +768,13 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
             val q = clean(it.groupValues[1]) ?: return null
             if (Numbers.ordinal(q.substringBefore(' ')) != null) return null
             if (rx("^(?:a |the )?(?:video|music|song|it)$").matches(q)) return listOf(Command.Media(MediaKey.PLAY))
+            if (it.groupValues[2].isBlank() && isKnownApp(q)) return listOf(Command.OpenApp(q))
             return listOf(Command.PlayMedia(q, clean(it.groupValues[2])?.let { a -> if (a.equals("insta", true)) "Instagram" else a }))
         }
         rx("^(.+?) (?:bajao|chalao|play karo|sunao|laga do|lagao)(?: (spotify|youtube|instagram|insta) (?:pe|par|mein))?$").matchEntire(c)?.let {
             val q = it.groupValues[1].replace(rx("^(?:gaana|gana|song)\\s+"), "").trim()
             if (Numbers.ordinal(q.substringBefore(' ')) != null || rx("^(?:reels?|shorts?|video)$").matches(q)) return null
+            if (it.groupValues[2].isBlank() && isKnownApp(q)) return listOf(Command.OpenApp(q))
             return listOf(Command.PlayMedia(q, clean(it.groupValues[2])?.let { a -> if (a.equals("insta", true)) "Instagram" else a }))
         }
         return null
@@ -862,7 +1090,9 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         }
         rx("^(?:tap|click|press|hit|select|choose|touch|tick|check|uncheck|toggle)(?: on)?(?: the)? (.+?)(?: (button|icon|option|tab|link|menu|item|checkbox|switch))?$").matchEntire(c)?.let {
             val label = it.groupValues[1].trim()
-            if (label.isBlank() || isKnownApp(label)) return null
+            if (label.isBlank()) return null
+            // "check Instagram" means open it; "tap/click Instagram" taps it (or opens it if it isn't on screen).
+            if (isKnownApp(label) && !rx("^(?:tap|click|press|hit|touch)\\b").containsMatchIn(c)) return null
             return listOf(Command.Tap(label))
         }
         rx("^(.+?) (?:pe|par) (?:tap|click|press) (?:karo|kar do)$|^(.+?) dabao$").matchEntire(c)?.let {
@@ -910,6 +1140,14 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         val name = stripArticles(m.groupValues[1].trim())
         if (name.isBlank()) return null
         if (isKnownApp(name)) return listOf(Command.OpenApp(name))
+        // "open youtube search tum hi ho", "open whatsapp the first chat" → open the app, then do the rest there.
+        val words = name.split(' ')
+        for (k in minOf(3, words.size - 1) downTo 1) {
+            val app = words.take(k).joinToString(" ")
+            if (!isKnownApp(app)) continue
+            val rest = parseClause(words.drop(k).joinToString(" "), app, 1)
+            if (rest.isNotEmpty() && rest.none { it is Command.Agentic || it is Command.Chat || it is Command.OpenApp }) return listOf(Command.OpenApp(app)) + rest
+        }
         // "open the search", "open menu", "open settings of this video" → tap something on screen
         if (rx("^(?:menu|search|search bar|options|more options|three dots|settings menu|keyboard|camera|gallery)$").matches(name)) {
             return if (name.startsWith("camera") || name.startsWith("gallery")) listOf(Command.OpenApp(name)) else listOf(Command.Tap(name))
@@ -930,7 +1168,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         const val PREVIOUS_APP = "__previous_app__"
 
         private val REASONING = Regex("\\b(?:tell me (?:if|whether|what|how|about)|let me know|whether|summari[sz]e|should i|figure out|compare|decide|explain (?:it|this)|batao ki|bata do ki)\\b", RegexOption.IGNORE_CASE)
-        private val QUESTION = Regex("^(?:what|who|whom|whose|why|how|when|where|which|is|are|am|was|were|do|does|did|can|could|should|would|will|shall|may|might|tell me|explain|define|describe|give me|suggest|recommend|help me|plan|brainstorm|write me|make me|create|calculate|translate|kya|kaun|kaise|kyun|kyon|kab|kahan|kitna|kitne|batao|samjhao)\\b|\\b(?:kya hai|kaise hai|kya hota hai|ka matlab)\\b")
+        private val QUESTION = Regex("^(?:what|who|whom|whose|why|how|when|where|which|is|are|am|was|were|(?:do|does|did) (?:you|i|we|they|he|she|it|my|your|u)|can|could|should|would|will|shall|may|might|tell me|explain|define|describe|give me|suggest|recommend|help me|plan|brainstorm|write me|make me|create|calculate|translate|kya|kaun|kaise|kyun|kyon|kab|kahan|kitna|kitne|batao|samjhao)\\b|\\b(?:kya hai|kaise hai|kya hota hai|ka matlab|kitni hai|kitna hai|kitne hai|kitne baje|kaun hai|kab hai|kahan hai|kyun hai)\\b")
         private val CONVERSATION = Regex("^(?:hi|hello|hey|hii+|yo|good (?:morning|afternoon|evening|night)|thanks|thank you|thank u|ok thanks|great|awesome|cool|nice|lol|haha|how are you|namaste|kaise ho|shukriya|dhanyavaad|i love you|you'?re (?:awesome|great|funny)|i'?m (?:bored|sad|happy|tired))\\b")
         private val PHONE_WORDS = Regex("\\b(?:screen|app|button|tap|click|scroll|swipe|notification|setting|settings|wifi|bluetooth|phone|contact|message|call|video|reel|post|comment|tab|menu|install|uninstall|download|upload|photo|gallery|camera|alarm|timer|reminder|calendar|event|schedule|playlist|song)\\b")
 
@@ -942,7 +1180,8 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
 object Numbers {
     private val words = mapOf(
         "one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5, "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10,
-        "once" to 1, "twice" to 2, "ek" to 1, "do" to 2, "teen" to 3, "char" to 4, "paanch" to 5,
+        "once" to 1, "twice" to 2, "thrice" to 3, "ek" to 1, "do" to 2, "teen" to 3, "char" to 4, "chaar" to 4, "paanch" to 5, "panch" to 5,
+        "chhe" to 6, "che" to 6, "saat" to 7, "aath" to 8, "nau" to 9, "das" to 10,
     )
     private val ordinals = mapOf(
         "first" to 1, "1st" to 1, "top" to 1, "pehla" to 1, "pahla" to 1, "pehli" to 1, "pehle" to 1,
@@ -951,6 +1190,11 @@ object Numbers {
         "fourth" to 4, "4th" to 4, "chautha" to 4, "fifth" to 5, "5th" to 5, "paanchva" to 5,
         "sixth" to 6, "6th" to 6, "seventh" to 7, "7th" to 7, "eighth" to 8, "8th" to 8, "ninth" to 9, "9th" to 9, "tenth" to 10, "10th" to 10,
         "last" to -1, "aakhri" to -1, "akhri" to -1,
+        "eleventh" to 11, "twelfth" to 12, "thirteenth" to 13, "fourteenth" to 14, "fifteenth" to 15, "sixteenth" to 16,
+        "seventeenth" to 17, "eighteenth" to 18, "nineteenth" to 19, "twentieth" to 20,
+        "teesre" to 3, "tisre" to 3, "doosre" to 2, "dusre" to 2, "chauthe" to 4, "paanchve" to 5, "panchve" to 5, "chhathe" to 6,
+        "chauthi" to 4, "paanchvi" to 5, "panchva" to 5, "panchvi" to 5, "chhatha" to 6, "chhathi" to 6, "chhata" to 6, "chatha" to 6, "chhatva" to 6,
+        "saatva" to 7, "saatvi" to 7, "satva" to 7, "aathva" to 8, "aathvi" to 8, "nauva" to 9, "nauvi" to 9, "dasva" to 10, "dasvi" to 10,
     )
 
     fun parse(s: String?): Int? {
@@ -959,5 +1203,7 @@ object Numbers {
         return t.toIntOrNull() ?: words[t]
     }
 
-    fun ordinal(s: String?): Int? = s?.trim()?.lowercase()?.let { ordinals[it] }
+    fun ordinal(s: String?): Int? = s?.trim()?.lowercase()?.let { w ->
+        ordinals[w] ?: Regex("^(\\d{1,3})(?:st|nd|rd|th|va|vi|wa|wi)$").matchEntire(w)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 }
+    }
 }

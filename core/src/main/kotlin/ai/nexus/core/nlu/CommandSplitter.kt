@@ -24,7 +24,7 @@ object CommandSplitter {
     )
     private val hindiVerbEndings = Regex(
         "\\b(kholo|khol do|karo|kar do|kariye|kijiye|jao|chalo|bhejo|bhej do|likho|likh do|dhundo|dhoondo|chalao|bajao|" +
-            "lagao|dabao|padho|sunao|dikhao|band|chalu|ruko|badhao|ghatao)\\b",
+            "lagao|dabao|padho|sunao|dikhao|band|chalu|ruko|badhao|ghatao|dikha|dikha do|chala|chala do|baja|khol|bhej|likh|dhund|laga|bata|kholna)\\b",
         RegexOption.IGNORE_CASE,
     )
 
@@ -73,6 +73,8 @@ object CommandSplitter {
         if (w in actionStarts) return true
         // Hindi is verb-final: "aur YouTube kholo" – the clause after the separator ends in a verb.
         val nextClause = after.split(Regex("[,;]|\\s(?:and|then|phir|aur)\\s")).firstOrNull().orEmpty()
+        // "aur rahul ko message karo ki …", "phir mom ko call karo": a person + ko + an action verb starts a new clause.
+        if (Regex("^\\S+(?: \\S+)? ko (?:bolo|bol do|batao|bata do|message|msg|call|phone|text|bhejo|bhej do|likho|keh do)\\b", RegexOption.IGNORE_CASE).containsMatchIn(after)) return true
         return hindiVerbEndings.containsMatchIn(nextClause) && nextClause.split(' ').size <= 6
     }
 

@@ -235,9 +235,9 @@ class Nexus(
                                 if (runSteps(steps) && steps.all { CommandDsl.toLine(it.command) != null }) memory.remember(MemoryKind.LEARNED, key, CommandDsl.toLines(steps.map { it.command }))
                             } else say("Okay $boss, say it another way, or say \"teach me\" and show me once.")
                         }
-                    } else {
+                    } else if (!offerScreenChoices(text)) {
                         teachTrigger = text
-                        say("$boss, I heard \"$text\" but I don't know that one yet. Say it another way, or say \"teach me\" and show me once.")
+                        say("$boss, I heard \"$text\" but there's nothing on this screen that matches. Say it another way, or say \"teach me\" and show me once.")
                     }
                     return@withLock
                 }
@@ -689,11 +689,42 @@ class Nexus(
     /** The on-screen label a short phrase refers to, if any. */
     private fun visibleLabelFor(phrase: String, s: ai.nexus.core.screen.ScreenSnapshot?): String? {
         s ?: return null
-        if (phrase.split(' ').size > 5) return null
-        val cleaned = phrase.replace(leadVerbs, "").replace(qualifiers, " ").replace(Regex("\\s+"), " ").trim()
+        val cleaned = phrase.lowercase().replace(politeLead, "").replace(leadVerbs, "").replace(hindiTail, "").replace(qualifiers, " ").replace(Regex("\\s+"), " ").trim()
         if (cleaned.length < 2) return null
-        return ai.nexus.core.screen.ElementFinder(s).rankByLabel(listOf(cleaned))
-            .firstOrNull { m -> !m.node.editable && m.score >= 0.85 && s.clickableTarget(m.node).clickable }?.node?.label
+        val finder = ai.nexus.core.screen.ElementFinder(s)
+        fun best(q: String, min: Double) = finder.rankByLabel(listOf(q))
+            .firstOrNull { m -> !m.node.editable && m.score >= min && s.clickableTarget(m.node).clickable }?.node?.label
+        best(cleaned, if (cleaned.split(' ').size > 5) 0.9 else 0.85)?.let { return it }
+        // Longer sentences: the longest run of words that names something on screen ("…open the editorial team one please").
+        val words = cleaned.split(' ')
+        for (len in minOf(5, words.size - 1) downTo 1) for (i in 0..words.size - len) {
+            val q = words.subList(i, i + len).joinToString(" ")
+            if (q.length < 3 || q in stopPhrases) continue
+            best(q, 0.9)?.let { return it }
+        }
+        return null
+    }
+
+    private val politeLead = Regex("^(?:(?:hey nexus|nexus|please|pls|can you|could you|will you|would you|just|i want to|i want you to|go and|bhai|yaar)\\s+)+", RegexOption.IGNORE_CASE)
+    private val hindiTail = Regex("\\s+(?:kholo|khol do|khol|karo|kar do|pe jao|par jao|pe click karo|par click karo|dabao|chalao|dikhao|please)$", RegexOption.IGNORE_CASE)
+    private val stopPhrases = setOf("the", "and", "for", "you", "can", "this", "that", "with", "open", "tap", "click", "please")
+
+    /**
+     * Last resort instead of "I don't understand": offer what's actually on the screen.
+     * "Boss, I see: Chats, Calls, Rahul, Editorial Team. Which one?" — the answer taps it.
+     */
+    private suspend fun offerScreenChoices(text: String): Boolean {
+        val s = kotlinx.coroutines.withTimeoutOrNull(1500) { ops.screen() } ?: return false
+        val finder = ai.nexus.core.screen.ElementFinder(s)
+        val ranked = finder.rankByLabel(listOf(text)).filter { !it.node.editable && s.clickableTarget(it.node).clickable && it.node.label.isNotBlank() && it.node.label.length <= 40 }
+            .map { it.node.label.trim() }.distinct()
+        val labels = (ranked + s.nodes.filter { n -> n.visible && !n.editable && n.label.isNotBlank() && n.label.length in 2..30 && s.clickableTarget(n).clickable }.map { it.label.trim() })
+            .distinct().take(4)
+        if (labels.isEmpty()) return false
+        ask("$boss, I'm not sure what \"$text\" means here. I can see ${labels.joinToString(", ")}. Which one should I tap? Or say \"teach me\".", labels) { idx ->
+            if (idx in labels.indices) report(runCommand(Command.Tap(labels[idx])), "tap")
+        }
+        return true
     }
 
     // ================================================================ teaching ("watch me")
@@ -912,6 +943,9 @@ class Nexus(
         }
         is Command.TakePhoto -> sys(system.openCamera(cmd.front, cmd.video))
         is Command.TapRegion -> tapRegion(cmd)
+        is Command.Tap -> screenCommand(cmd).let { r ->
+            if (notFound(r) && !cmd.long && apps.resolve(cmd.label) != null) openApp(cmd.label) else r
+        }
         is Command.ShareTo -> shareTo(cmd)
         Command.ClearNotifications -> {
             device.global(GlobalAction.NOTIFICATIONS); ops.awaitChange(null, 1500)
@@ -1682,7 +1716,7 @@ class Nexus(
         // The small phone brain is not reliable enough to drive screens by itself – only Claude does that.
         val pb: PhoneBrain? = null
         if (b == null && pb == null) {
-            return if (cmd is Command.Agentic) Outcome.Failed("I didn't understand \"$goal\". Try saying it another way, or download the free phone brain in Settings.", blocking = false)
+            return if (cmd is Command.Agentic) Outcome.Failed("I couldn't find how to do \"$goal\" on this screen.", blocking = false)
             else why
         }
         setState(AgentState.THINKING)

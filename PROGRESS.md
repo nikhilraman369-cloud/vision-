@@ -1,5 +1,15 @@
 # NEXUS v2 — Progress
 
+## 2.8.0 (versionCode 20): understands what you mean on screen
+- **Screen grammar:** generic rules for how people point at things and repeat actions, in English, Hindi and Hinglish:
+  positions ("second video", "sixth contact", "group at the top", "sabse upar wala chat", "second last", "number 4", "5th wala", "teesri chat"),
+  counts ("scroll 3 times", "teen baar scroll karo", "go back twice", "2 baar back jao", "next 5 reels", "3 reels aage"),
+  Hindi word order ("whatsapp kholo", "settings pe click karo", "rahul ko bolo …", "spotify pe X chalao", "google pe X dhundo", "neeche jao", "thoda upar"),
+  casual speech ("plz open 2nd vid", "torch on kr", "like kr do", "type kar hello", "insta kholke reels dikha").
+- **Checked with 372 phrasings** in three sets (the second and third written separately to test generalisation; first-try scores 90% and 59%, all fixed by general rules) plus simulated-screen tests: the top chat is opened (WhatsApp's search bar is skipped), "sixth contact"/"second last"/"5th wala" pick the right row, counts repeat the right number of times.
+- **Never "I don't understand":** anything that isn't a question is treated as something to do. NEXUS matches it against what's on screen (even inside a long sentence); if nothing matches, it lists what it can see and asks which one to tap.
+- Tapping an app name that isn't on screen opens the app. Lists: "second last" works, and ordinals beyond the visible rows scroll and keep counting.
+
 ## 2.7.1 (versionCode 19): YouTube Music actually plays the song
 - YT Music's "play from search" shortcut only opens its results page. NEXUS now looks the song up and opens it directly in YouTube Music (a watch link, which starts playing), and checks that music is really playing. If that fails it falls back to the old shortcut and then to tapping the result, which now also matches the result by its text when the list can't be read as rows.
 - Needs internet for the lookup. Untested against the live YouTube page (could not reach it from the build machine), so it fails safe: any problem falls back to the old ways.
