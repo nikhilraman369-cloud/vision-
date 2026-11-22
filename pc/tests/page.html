@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>NEXUS test page</title>
+<style>body{font:16px Segoe UI;margin:30px} a{display:block;margin:14px 0} .spacer{height:2400px}</style></head>
+<body>
+<h1>NEXUS test page</h1>
+<button onclick="document.title='clicked: get started'">Get started</button>
+<textarea aria-label="Message" rows="2" cols="40" oninput="document.title='text: ' + this.value"></textarea>
+<a href="#one"><h3>First result about cats</h3>example.com/cats</a>
+<a href="#two"><h3>Second result about dogs</h3>example.com/dogs</a>
+<a href="#three"><h3>Third result about birds</h3>example.com/birds</a>
+<div class="spacer"></div>
+<p id="bottom">bottom of the page</p>
+<script>
+  addEventListener('hashchange', () => document.title = 'went to ' + location.hash);
+  addEventListener('scroll', () => { if (scrollY > 300 && !document.title.startsWith('went')) document.title = 'scrolled ' + Math.round(scrollY); });
+</script>
+</body></html>

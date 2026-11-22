@@ -1,0 +1,10 @@
+vosk>=0.3.45
+sounddevice>=0.4
+PyQt6>=6.5
+uiautomation>=2.0.18
+comtypes>=1.2
+pycaw>=20230407
+psutil>=5.9
+pywin32>=306
+Pillow>=10
+keyboard>=0.13
