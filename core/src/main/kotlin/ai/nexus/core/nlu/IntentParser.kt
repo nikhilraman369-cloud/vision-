@@ -15,7 +15,12 @@ import ai.nexus.core.device.SystemSetting
  * @param isKnownApp tells the parser whether a name refers to an installed
  *   or well-known app, so "open Rahul" and "open Spotify" are told apart.
  */
-class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.isKnown(it) }) {
+class IntentParser(
+    private val isKnownApp: (String) -> Boolean = { BuiltInApps.isKnown(it) },
+    /** True when the words are (the start of) a saved contact's name: splits "message rahul hi" into who and what. */
+    private val knownContact: (String) -> Boolean = { false },
+) {
+    private val fixed = FixedTasks(isKnownApp, knownContact)
 
     fun parse(utterance: String): ParsedRequest {
         val normalized = TextNormalizer.normalize(utterance)
@@ -39,6 +44,11 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         // "done, call it morning" belongs together even with the comma.
         TEACH_STOP.matchEntire(TextNormalizer.stripFillers(normalized))?.let { m ->
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(Command.TeachStop(clean(m.groupValues[1])), normalized, 0.95)))
+        }
+
+        // "Ask ChatGPT …" keeps its whole prompt (it may contain "and", times, anything).
+        fixed.askAi(TextNormalizer.stripFillers(normalized, trailing = false))?.let {
+            return ParsedRequest(utterance, normalized, listOf(ParsedStep(it, normalized, 0.95)))
         }
 
         // Open-ended / timed: "keep scrolling up", "next reel every 15 seconds", "at 9 pm message Rahul …".
@@ -380,7 +390,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
     }
 
     private val rules: List<(String, String?) -> List<Command>?> = listOf(
-        ::counted, ::refs, ::hinglish, ::life, ::extras, ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
+        { c, _ -> fixed.clause(c) }, ::counted, ::refs, ::hinglish, ::life, ::extras, ::navigation, ::seek, ::scrolling, ::nextPrev, ::screenQueries, ::reactions, ::comments, ::submit,
         ::messaging, ::calls, ::toggles, ::levels, ::settings, ::notifications, ::files, ::media, ::results,
         ::sections, ::search, ::sendText, ::write, ::tap, ::misc, ::memory, ::url, ::openApp,
     )
@@ -1042,11 +1052,11 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         }
         rx("^remind me (?:to |about )?(.+?) (?:at|by) $clock$").matchEntire(c)?.let {
             val (h, m) = timeOf(it.groupValues[2], it.groupValues[3].ifBlank { null }, it.groupValues[4].ifBlank { null }) ?: return null
-            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[1])))
+            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[1]), exact = it.groupValues[4].isNotBlank() || h > 12 || h == 0))
         }
         rx("^remind me (?:at|by) $clock (?:to |about )?(.+)$").matchEntire(c)?.let {
             val (h, m) = timeOf(it.groupValues[1], it.groupValues[2].ifBlank { null }, it.groupValues[3].ifBlank { null }) ?: return null
-            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[4])))
+            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[4]), exact = it.groupValues[3].isNotBlank() || h > 12 || h == 0))
         }
         // Timers
         rx("^(?:set |start |put |lagao )?(?:an? )?(?:timer|countdown) (?:for |of )?(\\d+(?:\\.\\d+)?|an?|one|two|five|ten) $unitRx(?: (?:for|called) (.+))?$").matchEntire(c)?.let {
@@ -1060,7 +1070,7 @@ class IntentParser(private val isKnownApp: (String) -> Boolean = { BuiltInApps.i
         // Alarms
         rx("^(?:set |put |create |lagao )?(?:an? )?alarm (?:for |at )?$clock(?: (?:tomorrow|today|kal))?(?: (?:for|to|called|saying) (.+))?$").matchEntire(c)?.let {
             val (h, m) = timeOf(it.groupValues[1], it.groupValues[2].ifBlank { null }, it.groupValues[3].ifBlank { null }) ?: return null
-            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[4])))
+            return listOf(Command.SetAlarm(h, m, clean(it.groupValues[4]), exact = it.groupValues[3].isNotBlank() || h > 12 || h == 0))
         }
         rx("^wake me(?: up)? (?:at )?$clock$").matchEntire(c)?.let {
             val (h, m) = timeOf(it.groupValues[1], it.groupValues[2].ifBlank { null }, it.groupValues[3].ifBlank { null }) ?: return null

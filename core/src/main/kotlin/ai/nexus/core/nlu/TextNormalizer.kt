@@ -51,8 +51,34 @@ object TextNormalizer {
         rx("\\bwapas\\b|\\bvapas\\b|\\bwaapas\\b") to "wapas",
     )
 
+    /**
+     * English words spoken in Hindi come back from speech recognition in Devanagari ("कॉल", "टाइमर", "चैट जीपीटी").
+     * Letter-by-letter they become "kol", "taimar", "chait jipiti": turn them back into the English word.
+     * Only applied to text that was Devanagari, so real English is never touched.
+     */
+    private val devWords: Map<String, String> = mapOf(
+        "kol" to "call", "kaul" to "call", "myujik" to "music", "myuzik" to "music", "myujhik" to "music", "myusik" to "music",
+        "chait" to "chat", "chaitajipiti" to "chatgpt", "chaitjipiti" to "chatgpt", "chetajipiti" to "chatgpt", "jipiti" to "gpt", "jeepiti" to "gpt", "jipiti." to "gpt",
+        "klod" to "claude", "klaud" to "claude", "klaude" to "claude", "kload" to "claude", "jemini" to "gemini", "jaimini" to "gemini", "jemni" to "gemini",
+        "bnd" to "band", "taimar" to "timer", "taimer" to "timer", "minat" to "minute", "minut" to "minute", "minaton" to "minute", "sekand" to "second", "sekend" to "second", "sekind" to "second",
+        "men" to "mein", "yad" to "yaad", "aavaz" to "awaaz", "avaz" to "awaaz", "aavaj" to "awaaz", "avaj" to "awaaz", "aavaaz" to "awaaz",
+        "kaimara" to "camera", "kaimra" to "camera", "kemra" to "camera", "kaimre" to "camera", "selphi" to "selfie", "selfi" to "selfie", "sailphi" to "selfie",
+        "kolej" to "college", "kalej" to "college", "grup" to "group", "grupa" to "group", "klas" to "class", "kainsal" to "cancel", "kensal" to "cancel",
+        "phon" to "phone", "fon" to "phone", "sat" to "saat", "mesej" to "message", "maisej" to "message", "mesaj" to "message", "tekst" to "text",
+        "sarch" to "search", "sarcha" to "search", "ple" to "play", "pley" to "play", "vois" to "voice", "voyas" to "voice", "krom" to "chrome", "brauzar" to "browser",
+        "nyu" to "new", "agala" to "agla", "agali" to "agli", "pichala" to "pichla", "pichali" to "pichli", "gana" to "gaana", "mammi" to "mummy", "alarma" to "alarm", "alaram" to "alarm", "elarm" to "alarm", "torcha" to "torch", "volyum" to "volume", "voliyum" to "volume", "valyum" to "volume",
+        "phlaish" to "flash", "flaish" to "flash", "lait" to "light", "on" to "on", "of" to "off", "aph" to "off", "oph" to "off", "ainda" to "and",
+        "vidiyo" to "video", "vidio" to "video", "vediyo" to "video", "risent" to "recent", "lest" to "latest", "letest" to "latest", "send" to "send", "sainda" to "send",
+        "guga" to "google", "gugal" to "google", "yutyub" to "YouTube", "watsaep" to "WhatsApp", "vhatsaep" to "WhatsApp", "vatsaep" to "WhatsApp", "vatsap" to "WhatsApp",
+    )
+
     fun normalize(raw: String): String {
+        val fromDevanagari = Devanagari.containsDevanagari(raw)
         var s = Devanagari.toLatin(raw).trim()
+        if (fromDevanagari) s = s.split(' ').joinToString(" ") { w ->
+            val core = w.trimEnd('.', ',', '?', '!'); val tail = w.substring(core.length)
+            (devWords[core.lowercase()] ?: core) + tail
+        }.replace(rx("\\bchat ?gpt\\b|\\bchat gpt\\b"), "chatgpt").replace(rx("\\bflash ?light\\b"), "flashlight")
         s = s.replace('’', '\'').replace('“', '"').replace('”', '"')
         s = s.replace(wakeWord, "").replace(wakeWordAnywhere, " ")
         for ((r, rep) in asrFixes) s = s.replace(r, rep)

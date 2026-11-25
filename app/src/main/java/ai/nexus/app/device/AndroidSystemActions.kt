@@ -75,6 +75,31 @@ class AndroidSystemActions(private val context: Context) : SystemActions {
         }
     }
 
+    /**
+     * WhatsApp's call entries live in the contacts database (one row per WhatsApp number of a contact, mimetype
+     * vnd.com.whatsapp.voip.call / video.call). Opening that row is exactly what the Contacts app's WhatsApp
+     * call button does: it starts the call. null = no such entry (not on WhatsApp, or contacts not synced).
+     */
+    override suspend fun whatsappCall(contactId: String, number: String?, video: Boolean): SysResult? = withContext(Dispatchers.IO) {
+        if (!has(Manifest.permission.READ_CONTACTS)) return@withContext null
+        val mime = if (video) "vnd.android.cursor.item/vnd.com.whatsapp.video.call" else "vnd.android.cursor.item/vnd.com.whatsapp.voip.call"
+        val rows = ArrayList<Pair<Long, String>>()
+        for (pkgMime in listOf(mime, mime.replace("com.whatsapp", "com.whatsapp.w4b"))) {
+            context.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI, arrayOf(ContactsContract.Data._ID, ContactsContract.Data.DATA1),
+                "${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?", arrayOf(contactId, pkgMime), null,
+            )?.use { c -> while (c.moveToNext()) rows += c.getLong(0) to (c.getString(1) ?: "") }
+            if (rows.isNotEmpty()) {
+                val digits = number?.filter { it.isDigit() }?.takeLast(10)
+                val id = rows.firstOrNull { digits != null && it.second.filter { ch -> ch.isDigit() }.contains(digits) }?.first ?: rows.first().first
+                val pkg = if (pkgMime.contains("w4b")) "com.whatsapp.w4b" else "com.whatsapp"
+                val i = Intent(Intent.ACTION_VIEW).setDataAndType(Uri.withAppendedPath(ContactsContract.Data.CONTENT_URI, id.toString()), pkgMime).setPackage(pkg)
+                return@withContext withContext(Dispatchers.Main) { if (start(i)) SysResult.Done("") else null }
+            }
+        }
+        null
+    }
+
     override suspend fun openDialer(number: String?): SysResult {
         start(Intent(Intent.ACTION_DIAL, number?.let { Uri.parse("tel:$it") })); return SysResult.Done("")
     }

@@ -10,6 +10,8 @@ import kotlin.test.fail
  * understood as concrete phone actions, and produce the expected action.
  */
 class UnderstandingCorpusTest {
+    // The contacts the phone would have (group names are never contacts).
+    private val CONTACTS = setOf("rahul", "rahul sharma", "mom", "papa", "priya", "arjun", "moht")
     data class Case(val phrase: String, val expect: String, val line: Int)
 
     private fun cases(file: String = "understanding_corpus.txt"): List<Case> = javaClass.classLoader.getResource(file)!!.readText().lines()
@@ -23,9 +25,10 @@ class UnderstandingCorpusTest {
     @Test fun everyCommandIsUnderstood() = check("understanding_corpus.txt")
     @Test fun heldOutCommandsAreUnderstood() = check("understanding_corpus_2.txt")
     @Test fun roughCasualSpeechIsUnderstood() = check("understanding_corpus_3.txt")
+    @Test fun categoryATasksAreUnderstood() = check("category_a_corpus.txt")
 
     private fun check(file: String) {
-        val parser = IntentParser()
+        val parser = IntentParser(knownContact = { it.lowercase() in CONTACTS })
         val failures = ArrayList<String>()
         val all = cases(file)
         for (c in all) {

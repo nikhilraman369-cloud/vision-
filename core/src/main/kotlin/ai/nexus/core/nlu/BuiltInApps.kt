@@ -55,6 +55,9 @@ object BuiltInApps {
         add("com.reddit.frontpage", "reddit")
         add("com.pinterest", "pinterest")
         add("ai.nexus.app", "nexus")
+        add("com.openai.chatgpt", "chatgpt", "chat gpt", "gpt", "openai")
+        add("com.anthropic.claude", "claude", "claude ai")
+        add("com.google.android.apps.bard", "gemini", "google gemini", "bard")
     }
 
     fun isKnown(name: String): Boolean = aliases.containsKey(Fuzzy.normalize(name))

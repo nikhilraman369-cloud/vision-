@@ -1,0 +1,249 @@
+# CATEGORY A: the fixed tasks. Every line must parse exactly like this. Never loosen a line to make it pass.
+
+# ---- WhatsApp: message a person
+send hello to mom on whatsapp => SendMessage(contact=mom, text=hello, app=whatsapp
+whatsapp pe priya ko bolo main aa raha hoon => SendMessage(contact=priya, text=main aa raha hoon
+rahul ko message karo ki kal milte hain => SendMessage(contact=rahul, text=kal milte hain
+message rahul saying i'll be late => SendMessage(contact=rahul, text=i'll be late
+message rahul that the meeting is at 5 => SendMessage(contact=rahul, text=the meeting is at 5
+tell rahul that i am coming => SendMessage(contact=rahul, text=i am coming
+tell rahul i'll be late => SendMessage(contact=rahul, text=i'll be late
+text mom i reached home => SendMessage(contact=mom, text=i reached home
+whatsapp rahul hi kaise ho => SendMessage(contact=rahul, text=hi kaise ho
+message rahul hi kaise ho => SendMessage(contact=rahul, text=hi kaise ho
+send a message to papa saying call me => SendMessage(contact=papa, text=call me
+mom ko bolo ki khana bana do => SendMessage(contact=mom, text=khana bana do
+rahul ko bhejo ki main late hoon => SendMessage(contact=rahul, text=main late hoon
+priya ko whatsapp karo ki happy birthday => SendMessage(contact=priya, text=happy birthday
+priya ko happy birthday bhejo => SendMessage(contact=priya, text=happy birthday
+message rahul => SendMessage(contact=rahul, text=null
+rahul ko message karo => SendMessage(contact=rahul, text=null
+type hello to rahul but don't send => SendMessage(contact=rahul, text=hello && send=false
+reply ok => SendMessage(contact=null, text=ok
+
+# ---- WhatsApp: groups
+send a message to college group saying class cancelled => SendMessage(contact=college group, text=class cancelled
+college group mein bhejo class cancelled => SendMessage(contact=college group, text=class cancelled
+college group mein bolo ki kal chutti hai => SendMessage(contact=college group, text=kal chutti hai
+family group mein good morning bhejo => SendMessage(contact=family group, text=good morning
+message family group good morning => SendMessage(contact=family group, text=good morning
+open family group => OpenChat(contact=family
+open college group chat => OpenChat(contact=college group
+
+# ---- WhatsApp: open a chat
+open rahul's chat => OpenChat(contact=rahul
+open whatsapp chat with mom => OpenChat(contact=mom
+open chat with priya => OpenChat(contact=priya
+mom ki chat kholo => OpenChat(contact=mom
+whatsapp pe rahul ki chat kholo => OpenChat(contact=rahul
+read messages from rahul => ReadMessages(contact=rahul
+what did mom say => ReadMessages(contact=mom
+open whatsapp => OpenApp(app=whatsapp
+whatsapp kholo => OpenApp(app=whatsapp
+open whatsapp calls => GoTo(section=CALLS
+whatsapp status dikhao => GoTo(section=STATUS
+
+# ---- WhatsApp: calls (voice / video, person / group)
+whatsapp call rahul => Call(contact=rahul, && app=whatsapp, video=false
+call rahul on whatsapp => Call(contact=rahul, && app=whatsapp, video=false
+voice call rahul on whatsapp => Call(contact=rahul, && app=whatsapp, video=false
+whatsapp video call priya => Call(contact=priya, && app=whatsapp, video=true
+video call mom => Call(contact=mom, && app=whatsapp, video=true
+video call mom on whatsapp => Call(contact=mom, && app=whatsapp, video=true
+make a video call to papa => Call(contact=papa, && app=whatsapp, video=true
+rahul ko whatsapp call karo => Call(contact=rahul, && app=whatsapp, video=false
+rahul ko whatsapp pe call karo => Call(contact=rahul, && app=whatsapp, video=false
+mom ko video call karo => Call(contact=mom, && app=whatsapp, video=true
+mom ko video call lagao => Call(contact=mom, && app=whatsapp, video=true
+whatsapp pe priya ko video call karo => Call(contact=priya, && app=whatsapp, video=true
+call college group on whatsapp => Call(contact=college group, && app=whatsapp, video=false
+video call family group => Call(contact=family group, && app=whatsapp, video=true
+family group ko video call karo => Call(contact=family group, && app=whatsapp, video=true
+# plain phone calls stay phone calls
+call mom => Call(contact=mom, && app=null
+call rahul => Call(contact=rahul, && app=null
+rahul ko call karo => Call(contact=rahul, && app=null
+call 9876543210 => Call(contact=null, number=9876543210
+cut the call => EndCall
+hang up => EndCall
+
+# ---- YouTube
+play believer on youtube => PlayMedia(query=believer, app=youtube
+youtube pe arijit singh ke gaane chalao => PlayMedia(query=arijit singh ke gaane, app=youtube
+youtube par kesariya chalao => PlayMedia(query=kesariya, app=youtube
+kesariya youtube pe chalao => PlayMedia(query=kesariya, app=youtube
+play mrbeast latest video on youtube => PlayMedia(query=mrbeast latest video, app=youtube
+search filmmaking on youtube => Search(query=filmmaking, app=youtube
+youtube pe filmmaking search karo => Search(query=filmmaking, app=youtube
+open youtube => OpenApp(app=youtube
+youtube kholo => OpenApp(app=youtube
+open youtube shorts => GoTo(section=SHORTS
+pause the video => Media(key=PAUSE
+pause => Media(key=PAUSE || ControlTask(control=PAUSE
+next video => NextItem || Media(key=NEXT
+like this video => React(reaction=LIKE
+subscribe to this channel => React(reaction=SUBSCRIBE
+skip 10 seconds => Seek(seconds=10, relative=true
+play the second video => OpenResult(ordinal=2
+
+# ---- YouTube Music
+play kesariya on youtube music => PlayMedia(query=kesariya, app=youtube music
+youtube music pe tum hi ho chalao => PlayMedia(query=tum hi ho, app=youtube music
+play kesariya => PlayMedia(query=kesariya, app=null
+play some lofi songs => PlayMedia(query=lofi songs
+kesariya gaana chalao => PlayMedia(query=kesariya
+kesariya bajao => PlayMedia(query=kesariya
+arijit singh ke gaane bajao => PlayMedia(query=arijit singh ke gaane
+open youtube music => OpenApp(app=youtube music
+yt music kholo => OpenApp(app=yt music || OpenApp(app=youtube music
+next song => Media(key=NEXT || NextItem
+agla gaana => Media(key=NEXT || NextItem
+previous song => Media(key=PREVIOUS || PreviousItem
+gaana roko => Media(key=PAUSE
+resume the song => Media(key=PLAY
+
+# ---- Claude / ChatGPT / Gemini
+ask chatgpt what is quantum computing => AskAi(app=chatgpt, prompt=what is quantum computing
+ask chat gpt what is quantum computing => AskAi(app=chatgpt, prompt=what is quantum computing
+ask claude to write a poem about rain => AskAi(app=claude, prompt=write a poem about rain
+ask gemini who won the match => AskAi(app=gemini, prompt=who won the match
+ask gemini about the weather today => AskAi(app=gemini, prompt=the weather today
+gemini se pucho aaj ka weather kaisa hai => AskAi(app=gemini, prompt=aaj ka weather kaisa hai
+chatgpt se pucho ki chai kaise banate hain => AskAi(app=chatgpt, prompt=chai kaise banate hain
+claude se poocho python kya hai => AskAi(app=claude, prompt=python kya hai
+open chatgpt and ask how to make tea => AskAi(app=chatgpt, prompt=how to make tea
+open claude and type explain black holes => AskAi(app=claude, prompt=explain black holes
+chatgpt pe likho explain black holes => AskAi(app=chatgpt, prompt=explain black holes
+chatgpt mein likho write an email to my boss and keep it short => AskAi(app=chatgpt, prompt=write an email to my boss and keep it short
+ask claude write a story about a cat and a dog => AskAi(app=claude, prompt=write a story about a cat and a dog
+ask chatgpt in 10 minutes what to do => AskAi(app=chatgpt
+claude se pucho ki kal kya karna chahiye => AskAi(app=claude, prompt=kal kya karna chahiye
+gemini ko bolo ek poem likho => AskAi(app=gemini, prompt=ek poem likho
+tell chatgpt to summarise this => AskAi(app=chatgpt, prompt=summarise this
+search how to cook pasta on chatgpt => AskAi(app=chatgpt, prompt=how to cook pasta
+open chatgpt => OpenApp(app=chatgpt
+open claude => OpenApp(app=claude
+open gemini => OpenApp(app=gemini
+claude kholo => OpenApp(app=claude
+new chat in chatgpt => AskAi(app=chatgpt, prompt=null
+chatgpt mein new chat kholo => AskAi(app=chatgpt, prompt=null
+
+# ---- Browser / Google search
+search best phones under 20000 on google => Search(query=best phones under 20000, app=web
+google best phones under 20000 => Search(query=best phones under 20000, app=web
+google kar best phones under 20000 => Search(query=best phones under 20000, app=web
+google karo best phones under 20000 => Search(query=best phones under 20000, app=web
+search on google what is ai => Search(query=what is ai, app=web
+search in chrome how to cook pasta => Search(query=how to cook pasta, app=web
+chrome pe search karo pasta recipe => Search(query=pasta recipe, app=web
+google pe search karo iphone price => Search(query=iphone price, app=web
+iphone 16 price google karo => Search(query=iphone 16 price, app=web
+look up iphone 16 price on google => Search(query=iphone 16 price, app=web
+search the web for cheap flights => Search(query=cheap flights, app=web
+open chrome => OpenApp(app=chrome
+chrome kholo => OpenApp(app=chrome
+
+# ---- Timer
+set a timer for 5 minutes => SetTimer(seconds=300
+5 minute ka timer lagao => SetTimer(seconds=300
+timer for 30 seconds => SetTimer(seconds=30
+10 second ka timer => SetTimer(seconds=10
+timer laga do 2 minute ka => SetTimer(seconds=120
+ek ghante ka timer lagao => SetTimer(seconds=3600
+set timer 1 minute => SetTimer(seconds=60
+
+# ---- Alarm
+set an alarm for 6 am => SetAlarm(hour=6, minute=0
+set an alarm for 7:30 pm => SetAlarm(hour=19, minute=30
+wake me up at 6:30 => SetAlarm(hour=6, minute=30
+alarm laga do 7 baje => SetAlarm(hour=7, minute=0 && exact=false
+subah 6 baje ka alarm lagao => SetAlarm(hour=6, minute=0 && exact=true
+shaam 5 baje alarm laga do => SetAlarm(hour=17, minute=0 && exact=true
+7 baje ka alarm => SetAlarm(hour=7, minute=0
+6:30 ka alarm lagao => SetAlarm(hour=6, minute=30
+saade 6 baje ka alarm => SetAlarm(hour=6, minute=30
+raat 10 baje alarm lagao => SetAlarm(hour=22, minute=0
+alarm for 5 => SetAlarm(hour=5, minute=0 && exact=false
+
+# ---- Reminder
+remind me to drink water in 10 minutes => SetTimer(seconds=600, label=drink water
+remind me in 10 minutes to drink water => SetTimer(seconds=600, label=drink water
+remind me to call mom at 8 pm => SetAlarm(hour=20, minute=0, label=call mom
+yaad dilana 5 baje meeting hai => SetAlarm(hour=5, minute=0, label=meeting hai
+mujhe 10 minute mein yaad dilana pani peena => SetTimer(seconds=600, label=pani peena
+10 minute baad yaad dilana pani peena hai => SetTimer(seconds=600, label=pani peena hai
+shaam 6 baje yaad dilana gym jana hai => SetAlarm(hour=18, minute=0, label=gym jana hai
+
+# ---- Volume
+volume up => SetLevel(level=VOLUME, percent=null, delta=
+volume down => SetLevel(level=VOLUME, percent=null, delta=-
+volume 50 => SetLevel(level=VOLUME, percent=50
+set volume to 30 percent => SetLevel(level=VOLUME, percent=30
+volume full => SetLevel(level=VOLUME, percent=100
+volume full kar do => SetLevel(level=VOLUME, percent=100
+awaaz badhao => SetLevel(level=VOLUME, percent=null, delta=
+awaaz kam karo => SetLevel(level=VOLUME, percent=null, delta=-
+volume kam karo => SetLevel(level=VOLUME, percent=null, delta=-
+volume 50 pe karo => SetLevel(level=VOLUME, percent=50
+mute => SetLevel(level=VOLUME, percent=0
+mute the phone => SetLevel(level=VOLUME, percent=0 || Ringer(mode=silent
+max volume => SetLevel(level=VOLUME, percent=100
+
+# ---- Flashlight
+flashlight on => SetToggle(setting=FLASHLIGHT, on=true
+torch off => SetToggle(setting=FLASHLIGHT, on=false
+turn on the torch => SetToggle(setting=FLASHLIGHT, on=true
+turn off the flashlight => SetToggle(setting=FLASHLIGHT, on=false
+torch jalao => SetToggle(setting=FLASHLIGHT, on=true
+torch chalu karo => SetToggle(setting=FLASHLIGHT, on=true
+torch band karo => SetToggle(setting=FLASHLIGHT, on=false
+flashlight band kar do => SetToggle(setting=FLASHLIGHT, on=false
+torch on kar do => SetToggle(setting=FLASHLIGHT, on=true
+
+# ---- Camera
+open camera => TakePhoto(front=false, video=false)
+camera kholo => TakePhoto(front=false, video=false)
+camera open karo => TakePhoto(front=false, video=false)
+take a photo => TakePhoto(front=false, video=false)
+take a selfie => TakePhoto(front=true, video=false)
+selfie lo => TakePhoto(front=true
+front camera kholo => TakePhoto(front=true
+record a video => TakePhoto(front=false, video=true)
+video record karo => TakePhoto(video=true || TakePhoto(front=false, video=true
+
+# ---- What Sarvam actually writes: Hindi (and English words) in Devanagari
+व्हाट्सएप पर राहुल को वीडियो कॉल करो => Call(contact=rahul, && app=whatsapp, video=true
+राहुल को व्हाट्सएप कॉल करो => Call(contact=rahul, && app=whatsapp, video=false
+मम्मी को वीडियो कॉल करो => Call(contact=mummy, && app=whatsapp, video=true
+मॉम को कॉल करो => Call(contact=mom, && app=null
+यूट्यूब पर केसरिया चलाओ => PlayMedia(query=kesariya, app=youtube
+केसरिया गाना चलाओ => PlayMedia(query=kesariya
+यूट्यूब म्यूजिक पर तुम ही हो चलाओ => PlayMedia(query=tum hi ho, app=youtube music
+चैट जीपीटी से पूछो चाय कैसे बनाते हैं => AskAi(app=chatgpt, prompt=chay kaise banate hain
+चैटजीपीटी से पूछो चाय कैसे बनाते हैं => AskAi(app=chatgpt, prompt=chay kaise banate hain
+जेमिनी से पूछो आज का मौसम कैसा है => AskAi(app=gemini, prompt=aaj ka mausam kaisa hai
+क्लॉड से पूछो पायथन क्या है => AskAi(app=claude
+गूगल करो बेस्ट फोन => Search(query=best phone, app=web
+टॉर्च जलाओ => SetToggle(setting=FLASHLIGHT, on=true
+टॉर्च बंद करो => SetToggle(setting=FLASHLIGHT, on=false
+सात बजे का अलार्म लगाओ => SetAlarm(hour=7, minute=0 && exact=false
+7 बजे का अलार्म लगा दो => SetAlarm(hour=7, minute=0 && exact=false
+सुबह 6 बजे का अलार्म लगाओ => SetAlarm(hour=6, minute=0 && exact=true
+पांच मिनट का टाइमर लगाओ => SetTimer(seconds=300
+5 मिनट का टाइमर लगाओ => SetTimer(seconds=300
+10 मिनट में याद दिलाना पानी पीना => SetTimer(seconds=600, label=pani pina
+आवाज़ बढ़ाओ => SetLevel(level=VOLUME, percent=null, delta=
+वॉल्यूम कम करो => SetLevel(level=VOLUME, percent=null, delta=-
+कैमरा खोलो => TakePhoto(front=false, video=false)
+सेल्फी लो => TakePhoto(front=true
+राहुल को बोलो कि मैं आ रहा हूं => SendMessage(contact=rahul, text=main aa raha hun
+कॉलेज ग्रुप में भेजो क्लास कैंसल => SendMessage(contact=college group, text=class cancel
+Rahul ko WhatsApp पर call करो => Call(contact=Rahul, && app=whatsapp
+WhatsApp video call Mom. => Call(contact=Mom, && app=whatsapp, video=true
+Play Kesariya on YouTube Music. => PlayMedia(query=Kesariya, app=YouTube Music
+Ask ChatGPT, what is AI? => AskAi(app=chatgpt, prompt=what is AI
+राहुल को मैसेज करो कि कल मिलते हैं => SendMessage(contact=rahul, text=kal mil
+यूट्यूब खोलो => OpenApp(app=YouTube
+व्हाट्सएप खोलो => OpenApp(app=WhatsApp
+गाना रोको => Media(key=PAUSE
+अगला गाना => Media(key=NEXT || NextItem

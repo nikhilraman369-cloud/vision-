@@ -278,7 +278,7 @@ class NexusApp : Application() {
     /** Contacts, apps and remembered people feed the speech corrector. */
     suspend fun refreshVocabulary() {
         val contacts = runCatching { systemActions.allContactNames() }.getOrDefault(emptyList())
-        nexus.refreshVocabulary(contacts + nexus.apps.allLabels())
+        nexus.refreshVocabulary(contacts + nexus.apps.allLabels(), contacts)
     }
 
     /** JSON from the configured LLM (Claude), or null when the provider is local/off. */

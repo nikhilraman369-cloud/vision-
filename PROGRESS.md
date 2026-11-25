@@ -102,3 +102,13 @@ Install the build, run the acceptance tests in the report, then send Panel → D
 - Hearing Test winner: Sarvam (saarika:v2.5). Tap the bubble → records via earbud mic until you stop talking (0.8 s) → Sarvam → command.
 - Settings → Listening: Hearing engine (Sarvam / phone), Sarvam key field, earbud-mic switch.
 - If Sarvam fails (no net / bad key) NEXUS says so and falls back to the phone recogniser for 60 s.
+
+## 2.12.0 — Category A complete (fixed app-control tasks)
+Spec: `core/src/test/resources/category_a_corpus.txt` (217 phrases, English + Hinglish + Devanagari as Sarvam writes it). End-to-end: `CategoryATest` (16 scenarios on a simulated phone).
+- WhatsApp calls: "whatsapp call rahul", "video call mom", "rahul ko whatsapp pe call karo", "video call family group".
+  Saved contact → WhatsApp's own call entry in Contacts (no tapping). Group / no entry → open chat → call button → accept "Start call?" (never Cancel). Success only when the call screen shows.
+- WhatsApp messages: name/text split using real contact names ("message rahul hi kaise ho"), groups ("college group mein bhejo …"), drafts ("… but don't send").
+- Ask ChatGPT / Claude / Gemini: open app → new chat (unless already talking to it) → type → send. Whole prompt kept, even with "and".
+- Google search → Chrome. Timers, alarms ("7 baje" = next 7 o'clock; subah/shaam/raat; saade/sava/paune), reminders (Hindi "yaad dilana"), torch, volume, camera/selfie.
+- Devanagari English words fixed (कॉल→call, टाइमर→timer, चैट जीपीटी→chatgpt…).
+- Self-check screen (Panel → ✅ Self-check): checks every dependency, Try button per task, Copy results.

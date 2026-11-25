@@ -22,8 +22,86 @@ class WhatsAppSkill : AppSkill {
         is Command.SendMessage -> send(cmd, env)
         is Command.ReadMessages -> read(cmd, env)
         is Command.Search -> openChat(cmd.query, env, null)
+        is Command.Call -> if (cmd.app == "whatsapp") call(cmd, env) else null
         else -> null
     }
+
+    // ------------------------------------------------------------ calls
+
+    /**
+     * WhatsApp call. Saved contact → WhatsApp's own call entry (no screen tapping at all).
+     * Group, or no entry → open the chat and press its call button. Confirm prompts are accepted;
+     * success only when the call screen is really showing.
+     */
+    private suspend fun call(cmd: Command.Call, env: SkillEnv): Outcome {
+        val name = (if (cmd.contact == IntentParser.SAME_CONTACT) env.ctx.currentContactName else cmd.contact) ?: env.ctx.currentContactName
+            ?: return Outcome.Asked("Who should I call on WhatsApp?")
+        val kind = if (cmd.video) "video" else "voice"
+        val isGroup = Regex("\\bgroup\\b", RegexOption.IGNORE_CASE).containsMatchIn(name)
+        if (!isGroup) {
+            when (val lookup = env.contacts(name)) {
+                is ContactLookup.Ambiguous -> return Outcome.Asked("I found ${lookup.options.size} contacts called $name: " + lookup.options.joinToString { it.name } + ". Which one?")
+                is ContactLookup.Found -> {
+                    val c = lookup.contact
+                    env.ctx.currentContact = c; env.ctx.currentContactName = c.name
+                    val r = runCatching { env.system.whatsappCall(c.id, c.numbers.firstOrNull(), cmd.video) }.getOrNull()
+                    if (r is ai.nexus.core.device.SysResult.Done) {
+                        acceptCallPrompt(env, cmd.video)
+                        return if (onCallScreen(env, 6000)) Outcome.Success("Calling ${c.name} on WhatsApp ($kind).")
+                        else Outcome.Uncertain("I started a WhatsApp $kind call to ${c.name}, but I can't see the call screen yet.")
+                    }
+                    // No WhatsApp entry for this contact (or WhatsApp refused): use their chat's call button.
+                    val opened = openChat(c.name, env, null)
+                    if (opened !is Outcome.Success) return opened
+                    return pressCall(env, c.name, cmd.video)
+                }
+                ContactLookup.NotFound -> {}
+            }
+        }
+        // Groups and names WhatsApp knows but the phone doesn't: find the chat, press its call button.
+        val opened = searchChat(name, env)
+        if (opened !is Outcome.Success) return opened
+        return pressCall(env, env.ctx.currentContactName ?: name, cmd.video)
+    }
+
+    private val VOICE_LABELS = listOf("Voice call", "Audio call", "Call")
+    private val VIDEO_LABELS = listOf("Video call")
+
+    private suspend fun pressCall(env: SkillEnv, who: String, video: Boolean): Outcome {
+        val ops = env.ops
+        val s = ops.waitFor(3000) { ops.kind(it) == ScreenKind.WA_CHAT } ?: return Outcome.Failed("The chat with $who didn't open.")
+        val f = ElementFinder(s)
+        val btn = (if (video) f.byViewId("menuitem_video_call", "video_call_btn") else f.byViewId("menuitem_voip_call", "menuitem_call", "voice_call_btn"))
+            ?: f.byLabel(*(if (video) VIDEO_LABELS else VOICE_LABELS).toTypedArray(), requireClickable = true, minScore = 0.9)
+            ?: return Outcome.Failed("I couldn't find the ${if (video) "video" else "voice"} call button in $who's chat.")
+        ops.tap(btn, s) ?: return Outcome.Failed("The call button didn't respond.")
+        acceptCallPrompt(env, video)
+        return if (onCallScreen(env, 6000)) Outcome.Success("Calling $who on WhatsApp (${if (video) "video" else "voice"}).")
+        else Outcome.Uncertain("I pressed call in $who's chat, but I can't see the call screen yet.")
+    }
+
+    /** WhatsApp sometimes asks "Start voice call?" or, for groups, "Call group?": say yes. Never taps Cancel. */
+    private suspend fun acceptCallPrompt(env: SkillEnv, video: Boolean) {
+        val ops = env.ops
+        val yes = listOf("Call", "Start call", "Voice call", "Video call", "Call group", "Start", "Call now", "Ring")
+        val s = ops.waitFor(2500) { snap -> snap.packageName in packages && (isCallScreen(snap) || promptButton(snap, yes) != null) } ?: return
+        if (isCallScreen(s)) return
+        promptButton(s, yes)?.let { ops.tap(it, s) }
+    }
+
+    /** The confirm button of a dialog or bottom sheet: never the chat's own call icons in the top bar, never "Cancel". */
+    private fun promptButton(s: ai.nexus.core.screen.ScreenSnapshot, yes: List<String>) =
+        s.nodes.filter { it.clickable && !it.editable && it.shortViewId?.startsWith("menuitem") != true && it.bounds.bottom > s.screenHeight * 0.12 }
+            .filter { n -> yes.any { y -> n.label.trim().equals(y, true) } }
+            .maxByOrNull { it.bounds.top }
+
+    private fun isCallScreen(s: ai.nexus.core.screen.ScreenSnapshot): Boolean = s.packageName in packages && s.nodes.any { n ->
+        val l = n.label.lowercase()
+        l == "end call" || l == "leave call" || l.startsWith("calling") || l.startsWith("ringing") || l == "connecting" || l.contains("end-to-end encrypted") && s.nodes.any { it.label.equals("Mute", true) } ||
+            n.shortViewId in setOf("end_call_btn", "footer_end_call_btn", "call_status", "end_call_button")
+    }
+
+    private suspend fun onCallScreen(env: SkillEnv, ms: Long): Boolean = env.ops.waitFor(ms) { isCallScreen(it) } != null
 
     private fun pkg(env: SkillEnv) = env.ctx.currentPackage?.takeIf { it in packages } ?: Packages.WHATSAPP
 

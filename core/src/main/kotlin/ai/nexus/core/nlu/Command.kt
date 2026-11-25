@@ -45,7 +45,10 @@ sealed interface Command {
     /** [send] false = draft only ("type this but don't send"). */
     data class SendMessage(val contact: String?, val text: String?, val app: String? = null, val send: Boolean = true) : Command
     data class ReadMessages(val contact: String?, val app: String? = null) : Command
-    data class Call(val contact: String?, val number: String? = null, val numberIndex: Int? = null) : Command
+    /** [app] "whatsapp" = a WhatsApp call (voice, or [video]); null = a normal phone call. */
+    data class Call(val contact: String?, val number: String? = null, val numberIndex: Int? = null, val app: String? = null, val video: Boolean = false) : Command
+    /** "Ask ChatGPT …": open [app] ("chatgpt" | "claude" | "gemini"), start a new chat, type [prompt] and send it. null prompt = just a new chat. */
+    data class AskAi(val app: String, val prompt: String?) : Command
     data object EndCall : Command
     data class FindContact(val name: String) : Command
     data class SetToggle(val setting: SystemSetting, val on: Boolean?) : Command
@@ -71,7 +74,8 @@ sealed interface Command {
     /** "Do the same thing again". */
     data object Repeat : Command
     data class Shortcut(val name: String) : Command
-    data class SetAlarm(val hour: Int, val minute: Int, val label: String? = null) : Command
+    /** [exact] false = said without am/pm ("7 baje"): ring at the next 7 o'clock, morning or evening. */
+    data class SetAlarm(val hour: Int, val minute: Int, val label: String? = null, val exact: Boolean = true) : Command
     data class SetTimer(val seconds: Int, val label: String? = null) : Command
     data class Note(val text: String) : Command
     data object ReadNotes : Command

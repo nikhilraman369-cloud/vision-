@@ -71,9 +71,12 @@ class Nexus(
     private val boss: String get() = memory.settings.addressAs.ifBlank { "Boss" }
 
     /** Refresh the speech vocabulary (call when contacts/apps/memory change). */
-    fun refreshVocabulary(extraNames: Collection<String>) {
+    fun refreshVocabulary(extraNames: Collection<String>, contactsOnly: Collection<String> = emptyList()) {
         val mem = memory.items
         val names = extraNames + mem.filter { it.kind == MemoryKind.CONTACT_ALIAS || it.kind == MemoryKind.APP_ALIAS }.flatMap { listOfNotNull(it.key, it.value) }
+        contactNames = buildSet {
+            for (n in contactsOnly + mem.filter { it.kind == MemoryKind.CONTACT_ALIAS }.mapNotNull { it.key }) { val f = Fuzzy.normalize(n); if (f.isNotBlank()) { add(f); add(f.substringBefore(' ')) } }
+        }
         vocab.update(names, mem.filter { it.kind == MemoryKind.MISHEARING && it.key != null }.associate { it.key!! to it.value })
     }
 
@@ -90,7 +93,9 @@ class Nexus(
 
     val ctx = WorkingContext()
     val apps = AppDirectory(device, memory)
-    val parser = IntentParser { apps.isKnown(it) }
+    /** Saved contact names (full and first names, normalized): lets "message rahul hi kaise ho" split name from text. */
+    @Volatile private var contactNames: Set<String> = emptySet()
+    val parser = IntentParser({ apps.isKnown(it) }, { contactNames.contains(Fuzzy.normalize(it)) || memory.contactAlias(it) != null })
     private val ops = Ops(device, ctx)
     private val generic = GenericSkill()
     private val env = SkillEnv(ops, system, ctx, apps, memory, ::lookupContact)
@@ -469,7 +474,7 @@ class Nexus(
             total > 1 -> acknowledge("All done, $boss.")
             else -> {
                 val only = steps[0].command
-                if (needsAck(only)) acknowledge(ack(only))
+                if (needsAck(only) && !saidSomething) acknowledge(ack(only))
                 else if (slow(only) && !saidSomething) acknowledge("Done, $boss.")
                 else if (!saidSomething) emit(NexusEvent.Ack(""))
             }
@@ -954,7 +959,8 @@ class Nexus(
             if (btn != null) { ops.tap(btn, s); Outcome.Success("Cleared.") } else { device.global(GlobalAction.BACK); Outcome.Success("No notifications to clear.") }
         }
         Command.OpenLatestNotification -> system.recentNotifications(1).firstOrNull()?.let { n -> sys(system.openNotification(n.key)) } ?: Outcome.Failed("There are no notifications.", blocking = false)
-        is Command.Call -> call(cmd)
+        is Command.Call -> if (cmd.app == "whatsapp") appSkill(Packages.WHATSAPP)!!.handle(cmd, env)!! else call(cmd)
+        is Command.AskAi -> askAi(cmd)
         Command.EndCall -> sys(system.endCall())
         is Command.FindContact -> when (val r = lookupContact(cmd.name)) {
             is ContactLookup.Found -> { ctx.currentContact = r.contact; ctx.currentContactName = r.contact.name
@@ -984,8 +990,11 @@ class Nexus(
         is Command.ExplainElement -> describeScreen("What does the \"${cmd.label}\" button or option on this screen do?")
         is Command.Chat -> { chat(cmd.text); Outcome.Success() }
         is Command.Agentic -> agentFallback(cmd.goal, cmd, Outcome.NeedsAgent(""))
-        is Command.SetAlarm -> sys(system.setAlarm(cmd.hour, cmd.minute, cmd.label)).let {
-            if (it is Outcome.Success && it.message == null) Outcome.Success("Alarm set for ${"%d:%02d".format(cmd.hour, cmd.minute)}${cmd.label?.let { l -> " — $l" } ?: ""}.") else it
+        is Command.SetAlarm -> {
+            val hour = alarmHour(cmd)
+            sys(system.setAlarm(hour, cmd.minute, cmd.label)).let {
+                if (it is Outcome.Success && it.message == null) Outcome.Success("Alarm set for ${clock12(hour, cmd.minute)}${cmd.label?.let { l -> " — $l" } ?: ""}.") else it
+            }
         }
         is Command.SetTimer -> sys(system.setTimer(cmd.seconds, cmd.label)).let {
             if (it is Outcome.Success && it.message == null) Outcome.Success("Timer set for ${humanDuration(cmd.seconds)}${cmd.label?.let { l -> " — $l" } ?: ""}.") else it
@@ -1148,6 +1157,16 @@ class Nexus(
     }
 
     private suspend fun search(cmd: Command.Search): Outcome {
+        if (cmd.app == "web") {
+            // Google search in the browser (Chrome when installed).
+            val url = "https://www.google.com/search?q=" + URLEncoder.encode(cmd.query, "UTF-8")
+            val before = ops.screen()?.packageName
+            val chrome = apps.resolve("chrome")?.packageName
+            if (!device.openUri(url, chrome)) return Outcome.Failed("I couldn't open the browser.")
+            ctx.lastSearchQuery = cmd.query; ctx.lastSearchApp = "web"
+            ops.waitFor(5000) { it.packageName != before }
+            return Outcome.Success("Searching Google for ${cmd.query}.")
+        }
         val target = cmd.app?.let { apps.resolve(it)?.packageName }
         if (target != null) ensureApp(target)
         val cur = ops.screen()
@@ -1313,6 +1332,55 @@ class Nexus(
         }
         return screenCommand(cmd)
     }
+
+    /** "7 baje" without am/pm: the next 7 o'clock from now, morning or evening. */
+    private fun alarmHour(c: Command.SetAlarm): Int {
+        if (c.exact || c.hour !in 1..12) return c.hour
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = system.nowMs() }
+        val nowMin = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+        val am = (c.hour % 12) * 60 + c.minute
+        val pm = am + 12 * 60
+        fun until(t: Int) = (t - nowMin + 24 * 60) % (24 * 60)
+        return if (until(am) <= until(pm)) c.hour % 12 else c.hour % 12 + 12
+    }
+
+    private fun clock12(h: Int, m: Int) = "${if (h % 12 == 0) 12 else h % 12}:${"%02d".format(m)} ${if (h < 12) "AM" else "PM"}"
+
+    /**
+     * "Ask ChatGPT …": open the app, start a new chat (unless you're already talking to it), type the prompt and send it.
+     * Success only when the prompt has left the text box.
+     */
+    private suspend fun askAi(cmd: Command.AskAi): Outcome {
+        val (fallbackPkg, label) = when (cmd.app) {
+            "chatgpt" -> "com.openai.chatgpt" to "ChatGPT"
+            "claude" -> "com.anthropic.claude" to "Claude"
+            else -> "com.google.android.apps.bard" to "Gemini"
+        }
+        val pkg = apps.resolve(label)?.packageName ?: fallbackPkg
+        val wasOpen = ops.screen()?.packageName == pkg
+        val opened = ensureApp(pkg, label)
+        if (opened is Outcome.Failed) return Outcome.Failed("I couldn't open $label. Is it installed?")
+        val ready = ops.waitForReady(memory.patience(pkg, 8000)) { it.packageName == pkg && (it.editableFields().isNotEmpty() || newChatButton(it) != null) }
+            ?: return Outcome.Failed("$label opened, but I can't see its message box.", blocking = false)
+        if (!wasOpen || cmd.prompt == null) {
+            newChatButton(ready)?.let { b -> ops.tap(b, ready); ops.waitForReady(3000) { it.packageName == pkg && it.editableFields().isNotEmpty() } }
+        }
+        val prompt = cmd.prompt ?: return Outcome.Success("New chat open in $label.")
+        val s = ops.waitForReady(4000) { it.packageName == pkg && it.editableFields().isNotEmpty() }
+            ?: return Outcome.Failed("I can't find $label's message box.", blocking = false)
+        val field = s.focusedField() ?: s.editableFields().maxByOrNull { it.bounds.top }
+        val typed = ops.typeText(prompt, field)
+        if (typed is Outcome.Failed) return typed
+        val sent = ops.submit(prompt, listOf("Send", "Send message", "Send prompt", "Submit", "Send query"), listOf("send_button", "composer_send_button", "send"))
+        return when (sent) {
+            is Outcome.Success -> Outcome.Success("Asked $label.")
+            is Outcome.Uncertain -> Outcome.Uncertain("I typed it into $label and pressed send, but couldn't confirm it went.")
+            else -> sent
+        }
+    }
+
+    private fun newChatButton(s: ai.nexus.core.screen.ScreenSnapshot) =
+        ai.nexus.core.screen.ElementFinder(s).byLabel("New chat", "New conversation", "Start new chat", "New Chat", requireClickable = true, minScore = 0.9)
 
     private suspend fun call(cmd: Command.Call): Outcome {
         val number = cmd.number ?: run {
@@ -1803,7 +1871,7 @@ class Nexus(
             Reaction.DISLIKE -> "Disliked."
         }
         is Command.SendMessage -> if (c.send) "Sent." else "Drafted."
-        is Command.Call -> "Calling."
+        is Command.Call -> if (c.app == "whatsapp") "Calling on WhatsApp." else "Calling."
         is Command.PlayMedia -> "Playing ${c.query}."
         else -> "Done."
     }

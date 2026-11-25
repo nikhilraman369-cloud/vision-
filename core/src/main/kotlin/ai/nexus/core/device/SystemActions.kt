@@ -78,6 +78,11 @@ interface SystemActions {
     suspend fun resolveVideoId(query: String, music: Boolean = false): String? = null
     /** Open [url] directly in the app [packageName] (e.g. a YouTube Music watch link, which starts playing). */
     suspend fun openInApp(url: String, packageName: String): SysResult = SysResult.Failed("Not supported here.")
+    /**
+     * WhatsApp voice/video call to a saved contact through WhatsApp's own entries in the contacts database
+     * (the same thing the Contacts app's WhatsApp buttons use). null = this contact has no WhatsApp entry.
+     */
+    suspend fun whatsappCall(contactId: String, number: String?, video: Boolean): SysResult? = null
     /** Short haptic patterns for silent feedback. */
     fun haptic(kind: String) {}
     suspend fun batteryPercent(): Int?
