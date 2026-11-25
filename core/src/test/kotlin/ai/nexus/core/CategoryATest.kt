@@ -192,6 +192,25 @@ class CategoryATest {
         assertEquals("Rahul Sharma", p.waChat)
     }
 
+    @Test fun englishAskRelaysAsAQuestion() {
+        val (p, n, r) = setup()
+        run(n, "Ask Rahul if he's coming tomorrow")
+        assertEquals(listOf("Are you coming tomorrow?"), p.waSent, "log=${p.log} replies=$r")
+    }
+
+    @Test fun englishMessageAndTellIsOneMessage() {
+        val (p, n, r) = setup()
+        run(n, "WhatsApp Priya and tell her the meeting is cancelled")
+        assertEquals(listOf("the meeting is cancelled"), p.waSent, "log=${p.log} replies=$r")
+        assertEquals("Priya", p.waChat)
+    }
+
+    @Test fun englishGiveMomAVideoCall() {
+        val (p, n, r) = setup(); p.waEntries += "12"
+        run(n, "Give Mom a video call")
+        assertEquals("Mom", p.callTo, "log=${p.log} replies=$r"); assertTrue(p.callVideo)
+    }
+
     @Test fun hindiMessageToContact() {
         val (p, n, r) = setup()
         run(n, "mom ko bolo ki khana bana do")

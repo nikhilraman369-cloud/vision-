@@ -1,0 +1,178 @@
+# CATEGORY A in everyday English: the main way NEXUS is spoken to. Never loosen a line to make it pass.
+
+# ---- WhatsApp messages
+Send a WhatsApp to Rahul saying I'm running late => SendMessage(contact=Rahul, text=I'm running late
+Send a WhatsApp message to Mom that I'll be home by 8 => SendMessage(contact=Mom, text=I'll be home by 8
+WhatsApp Priya and tell her the meeting is cancelled => SendMessage(contact=Priya, text=the meeting is cancelled
+Can you message Rahul and ask him if he's free tonight => SendMessage(contact=Rahul, text=Are you free tonight?
+Message Rahul and tell him I'm outside => SendMessage(contact=Rahul, text=I'm outside
+Text Arjun happy birthday => SendMessage(contact=Arjun, text=happy birthday
+Tell Mom I'm on my way => SendMessage(contact=Mom, text=I'm on my way
+Tell Rahul that he should bring his laptop => SendMessage(contact=Rahul, text=you should bring your laptop
+Let Rahul know I'll call him later => SendMessage(contact=Rahul, text=I'll call you later
+Let Mom know that I reached safely => SendMessage(contact=Mom, text=I reached safely
+Ask Rahul if he's coming tomorrow => SendMessage(contact=Rahul, text=Are you coming tomorrow?
+Ask Priya if she can send the notes => SendMessage(contact=Priya, text=Can you send the notes?
+Ask Dad whether he wants dinner => SendMessage(contact=Dad, text=Do you want dinner?
+Ask Arjun when he's free => SendMessage(contact=Arjun, text=When are you free?
+Ask Mom where the keys are => SendMessage(contact=Mom, text=Where the keys are?
+Reply to Rahul saying sounds good => SendMessage(contact=Rahul, text=sounds good
+Send "good morning" to Dad => SendMessage(contact=Dad, text=good morning
+Send Priya a message saying thank you => SendMessage(contact=Priya, text=thank you
+Drop a message to John saying see you soon => SendMessage(contact=John, text=see you soon
+Message Rahul saying call me when you're free => SendMessage(contact=Rahul, text=call me when you're free
+Message the college group that class is cancelled => SendMessage(contact=college group, text=class is cancelled
+Send a message in the family group saying happy diwali => SendMessage(contact=family group, text=happy diwali
+Tell the family group I'll be late for dinner => SendMessage(contact=family group, text=I'll be late for dinner
+Type hello but don't send it => Write(text=hello, submit=false) || SendMessage(contact=null, text=hello && send=false
+Write a message to Rahul saying hi but don't send => SendMessage(contact=Rahul, text=hi && send=false
+
+# ---- WhatsApp chats
+Open my chat with Rahul => OpenChat(contact=Rahul
+Open Rahul's WhatsApp => OpenChat(contact=Rahul, app=whatsapp
+Go to Mom's chat => OpenChat(contact=Mom
+Open the college group => OpenChat(contact=college group
+Show me messages from Priya => ReadMessages(contact=Priya
+Read my last message from Rahul => ReadMessages(contact=Rahul
+What did Rahul send me => ReadMessages(contact=Rahul
+Do I have any new messages => ReadMessages(contact=null
+Check my messages => ReadMessages(contact=null
+
+# ---- WhatsApp calls
+Call Rahul on WhatsApp => Call(contact=Rahul, && app=whatsapp, video=false
+WhatsApp call Mom => Call(contact=Mom, && app=whatsapp, video=false
+Make a WhatsApp call to Dad => Call(contact=Dad, && app=whatsapp, video=false
+Start a video call with Priya => Call(contact=Priya, && app=whatsapp, video=true
+Video call Rahul on WhatsApp => Call(contact=Rahul, && app=whatsapp, video=true
+Give Mom a video call => Call(contact=Mom, && app=whatsapp, video=true
+Give Rahul a call on WhatsApp => Call(contact=Rahul, && app=whatsapp, video=false
+Can you video call Arjun => Call(contact=Arjun, && app=whatsapp, video=true
+Make a WhatsApp video call to John => Call(contact=John, && app=whatsapp, video=true
+Voice call Priya => Call(contact=Priya, && app=whatsapp, video=false
+Audio call Rahul on WhatsApp => Call(contact=Rahul, && app=whatsapp, video=false
+Call the family group on WhatsApp => Call(contact=family group, && app=whatsapp, video=false
+Start a group video call with the college group => Call(contact=college group, && app=whatsapp, video=true
+# phone calls
+Call Mom => Call(contact=Mom, && app=null
+Give Dad a call => Call(contact=Dad, && app=null
+Phone Dad => Call(contact=Dad, && app=null
+Ring Rahul => Call(contact=Rahul, && app=null
+Dial 9876543210 => Call(contact=null, number=9876543210
+Hang up => EndCall
+
+# ---- YouTube / YouTube Music
+Play Believer by Imagine Dragons on YouTube => PlayMedia(query=Believer by Imagine Dragons, app=YouTube
+Play Shape of You on YouTube => PlayMedia(query=Shape of You, app=YouTube
+Put on some lo-fi music => PlayMedia(query=lo-fi music, app=null
+Play some relaxing music => PlayMedia(query=relaxing music
+Play Arijit Singh songs on YouTube Music => PlayMedia(query=Arijit Singh songs, app=YouTube Music
+Play the song Kesariya => PlayMedia(query=Kesariya, app=null
+Play Tum Hi Ho => PlayMedia(query=Tum Hi Ho, app=null
+Can you play Perfect by Ed Sheeran => PlayMedia(query=Perfect by Ed Sheeran
+I want to listen to Blinding Lights => PlayMedia(query=Blinding Lights
+Play my liked songs on YouTube Music => PlayMedia(query=my liked songs, app=YouTube Music
+Search YouTube for cooking videos => Search(query=cooking videos, app=youtube
+Search for MrBeast on YouTube => Search(query=MrBeast, app=YouTube
+Show me funny cat videos on YouTube => Search(query=funny cat videos, app=youtube
+Find videos about black holes on YouTube => Search(query=black holes, app=youtube
+Watch the latest video from MKBHD => PlayMedia(query=MKBHD latest video, app=youtube
+Watch Interstellar trailer => PlayMedia(query=Interstellar trailer, app=youtube
+Open YouTube and search for Python tutorials => OpenApp(app=YouTube && Search(query=Python tutorials
+Pause the music => Media(key=PAUSE
+Stop the song => Media(key=PAUSE
+Resume => ControlTask(control=RESUME
+Play the next song => Media(key=NEXT
+Skip this song => Media(key=NEXT
+Skip => Media(key=NEXT || NextItem
+Go back to the previous song => Media(key=PREVIOUS
+Previous song => Media(key=PREVIOUS
+Skip ahead 30 seconds => Seek(seconds=30, relative=true
+Go back 10 seconds => Seek(seconds=-10, relative=true
+Like this song => React(reaction=LIKE
+Like this video => React(reaction=LIKE
+
+# ---- ChatGPT / Claude / Gemini
+Ask ChatGPT how to make pasta => AskAi(app=chatgpt, prompt=how to make pasta
+Ask ChatGPT to write a cover letter for a marketing job => AskAi(app=chatgpt, prompt=write a cover letter for a marketing job
+Ask Claude to explain quantum physics in simple words => AskAi(app=claude, prompt=explain quantum physics in simple words
+Ask Gemini what the weather is like in Mumbai => AskAi(app=gemini, prompt=what the weather is like in Mumbai
+Hey ChatGPT, what is the capital of France => AskAi(app=chatgpt, prompt=what is the capital of France
+Can you ask Claude to summarize the French revolution => AskAi(app=claude, prompt=summarize the French revolution
+Open ChatGPT and ask it to write a poem about the sea => AskAi(app=chatgpt, prompt=write a poem about the sea
+Use ChatGPT to translate hello into Spanish => AskAi(app=chatgpt, prompt=translate hello into Spanish
+Ask ChatGPT, what's the difference between RAM and ROM? => AskAi(app=chatgpt, prompt=what's the difference between RAM and ROM
+Get Claude to write an email to my professor asking for an extension => AskAi(app=claude, prompt=write an email to my professor asking for an extension
+Have Gemini plan a 3 day trip to Goa => AskAi(app=gemini, prompt=plan a 3 day trip to Goa
+Tell ChatGPT to make it shorter => AskAi(app=chatgpt, prompt=make it shorter
+Ask Claude to write a story about a dragon and a knight, and make it funny => AskAi(app=claude, prompt=write a story about a dragon and a knight, and make it funny
+Start a new chat in Claude => AskAi(app=claude, prompt=null
+Open a new ChatGPT chat => AskAi(app=chatgpt, prompt=null
+Open ChatGPT => OpenApp(app=ChatGPT
+Open Gemini => OpenApp(app=Gemini
+
+# ---- Google search
+Google how tall is Mount Everest => Search(query=how tall is Mount Everest, app=web
+Search Google for the best pizza near me => Search(query=the best pizza near me, app=web
+Look up the weather in Delhi => Search(query=the weather in Delhi, app=web
+Search the internet for iPhone 16 reviews => Search(query=iPhone 16 reviews, app=web
+Search the web for cheap flights to Goa => Search(query=cheap flights to Goa, app=web
+Search for flights to Goa on Google => Search(query=flights to Goa, app=web
+Open Chrome and search for laptop deals => OpenApp(app=Chrome && Search(query=laptop deals
+What's on Google for cricket score => Search(query=cricket score, app=web
+
+# ---- Timers
+Set a timer for 10 minutes => SetTimer(seconds=600
+Start a 5 minute timer => SetTimer(seconds=300
+Timer 2 minutes => SetTimer(seconds=120
+Set a 30 second timer => SetTimer(seconds=30
+Set a timer for one hour => SetTimer(seconds=3600
+Set a timer for an hour and a half => SetTimer(seconds=5400
+Set a timer for half an hour => SetTimer(seconds=1800
+Countdown 3 minutes => SetTimer(seconds=180
+
+# ---- Alarms
+Set an alarm for 7 am => SetAlarm(hour=7, minute=0 && exact=true
+Set an alarm for 6:45 tomorrow morning => SetAlarm(hour=6, minute=45 && exact=true
+Set an alarm for 10 at night => SetAlarm(hour=22, minute=0 && exact=true
+Wake me up at 5:30 am => SetAlarm(hour=5, minute=30
+Set alarm at 9 pm => SetAlarm(hour=21, minute=0
+Alarm at 8 => SetAlarm(hour=8, minute=0 && exact=false
+Set an alarm in 30 minutes => SetTimer(seconds=1800
+
+# ---- Reminders
+Remind me to call Mom at 6 pm => SetAlarm(hour=18, minute=0, label=call Mom
+Remind me in 20 minutes to take my medicine => SetTimer(seconds=1200, label=take my medicine
+Remind me to drink water in an hour => SetTimer(seconds=3600, label=drink water
+Remind me at 9 to check email => SetAlarm(hour=9, minute=0, label=check email && exact=false
+Set a reminder for 5 pm to go to the gym => SetAlarm(hour=17, minute=0, label=go to the gym
+Set a reminder to pay rent at 8 am => SetAlarm(hour=8, minute=0, label=pay rent
+Remind me tomorrow at 8 am to pay rent => SetAlarm(hour=8, minute=0, label=pay rent
+
+# ---- Volume
+Turn up the volume => SetLevel(level=VOLUME, percent=null, delta=15
+Increase the volume => SetLevel(level=VOLUME, percent=null, delta=
+Turn the volume down => SetLevel(level=VOLUME, percent=null, delta=-15
+Lower the volume => SetLevel(level=VOLUME, percent=null, delta=-
+Set the volume to 70% => SetLevel(level=VOLUME, percent=70
+Volume to max => SetLevel(level=VOLUME, percent=100
+Make it louder => SetLevel(level=VOLUME, percent=null, delta=15
+Louder => SetLevel(level=VOLUME, percent=null, delta=15
+Make it quieter => SetLevel(level=VOLUME, percent=null, delta=-15
+It's too loud => SetLevel(level=VOLUME, percent=null, delta=-15
+Mute the volume => SetLevel(level=VOLUME, percent=0
+Unmute => SetLevel(level=VOLUME, percent=
+
+# ---- Flashlight
+Turn on the flashlight => SetToggle(setting=FLASHLIGHT, on=true
+Turn the flashlight off => SetToggle(setting=FLASHLIGHT, on=false
+Switch on the torch => SetToggle(setting=FLASHLIGHT, on=true
+Flashlight please => SetToggle(setting=FLASHLIGHT, on=null
+Turn off the torch => SetToggle(setting=FLASHLIGHT, on=false
+
+# ---- Camera
+Open the camera => TakePhoto(front=false, video=false)
+Take a picture => TakePhoto(front=false, video=false)
+Take a selfie => TakePhoto(front=true, video=false)
+Open the front camera => TakePhoto(front=true, video=false)
+Record a video => TakePhoto(front=false, video=true)
+Start recording a video => TakePhoto(front=false, video=true)

@@ -11,7 +11,7 @@ import kotlin.test.fail
  */
 class UnderstandingCorpusTest {
     // The contacts the phone would have (group names are never contacts).
-    private val CONTACTS = setOf("rahul", "rahul sharma", "mom", "papa", "priya", "arjun", "moht")
+    private val CONTACTS = setOf("rahul", "rahul sharma", "mom", "papa", "priya", "arjun", "moht", "dad", "john")
     data class Case(val phrase: String, val expect: String, val line: Int)
 
     private fun cases(file: String = "understanding_corpus.txt"): List<Case> = javaClass.classLoader.getResource(file)!!.readText().lines()
@@ -26,6 +26,7 @@ class UnderstandingCorpusTest {
     @Test fun heldOutCommandsAreUnderstood() = check("understanding_corpus_2.txt")
     @Test fun roughCasualSpeechIsUnderstood() = check("understanding_corpus_3.txt")
     @Test fun categoryATasksAreUnderstood() = check("category_a_corpus.txt")
+    @Test fun categoryAInEverydayEnglish() = check("category_a_english.txt")
 
     private fun check(file: String) {
         val parser = IntentParser(knownContact = { it.lowercase() in CONTACTS })

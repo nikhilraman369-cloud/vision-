@@ -33,6 +33,7 @@ internal class FixedTasks(
 
     /** Whole-utterance: "ask ChatGPT …" keeps its whole prompt, even with "and" or times inside it. */
     fun askAi(t: String): Command.AskAi? {
+        rx("^(?:start |open |begin )?(?:a )?(?:new|fresh) $AI (?:chat|conversation)$").matchEntire(t)?.let { m -> return Command.AskAi(aiApp(m.groupValues[1]), null) }
         rx("^(?:start |open )?(?:a )?(?:new|naya|nayi) chat(?: kholo| karo)?(?: in| on| mein| me| pe| par)? $AI$|^$AI (?:mein|me|pe|par|in|on) (?:a )?(?:new|naya|nayi) chat(?: kholo| karo| open karo| start karo| shuru karo)?$").matchEntire(t)?.let { m ->
             return Command.AskAi(aiApp(m.groupValues[1].ifBlank { m.groupValues[2] }), null)
         }
@@ -45,6 +46,10 @@ internal class FixedTasks(
             rx("^$AI $HI_PREP $HI_ASK(?: ki| ke)?[,:]? (.+)$"),
             // on chatgpt, ask …
             rx("^(?:on|in|using) $AI,? (?:ask|type|write|search)(?: for)? (.+)$"),
+            // hey chatgpt, what is …
+            rx("^(?:hey|hi|hello|ok|okay|yo) $AI[,:]? (.+)$"),
+            // use chatgpt to translate …, get claude to write …, have gemini plan …
+            rx("^(?:use|get|have|make|let) $AI(?: app)? (?:to |and )?(.+)$"),
         )
         for (p in patterns) p.matchEntire(t)?.let { m -> clean(m.groupValues[2])?.let { return Command.AskAi(aiApp(m.groupValues[1]), it) } }
         // chatgpt se … pucho
@@ -56,10 +61,143 @@ internal class FixedTasks(
 
     // ------------------------------------------------------------ clause rules
 
-    fun clause(c: String): List<Command>? =
+    fun clause(c: String): List<Command>? = english(c) ?: fixedClause(c)
+
+    /** Run on each clause before any rule, so every rule sees the plain form. */
+    fun rewrite(c: String): String = englishRewrite(c)
+
+    /** Whole utterance, before it is split at "and": "WhatsApp Priya and tell her …", "message Rahul and ask him if …". */
+    fun relay(t: String): Command.SendMessage? {
+        val m = rx("^(?:message|msg|text|$WA|ping) (.+?) and (tell|ask) (?:him|her|them)(?: that)?,? (.+)$").matchEntire(englishRewrite(t)) ?: return null
+        val text = if (m.groupValues[2].equals("ask", true)) asQuestion(m.groupValues[3]) else toSecondPerson(m.groupValues[3])
+        return Command.SendMessage(contactRef(stripArticles(m.groupValues[1])), text, if (rx("^$WA ").containsMatchIn(t)) "whatsapp" else null)
+    }
+
+    private fun fixedClause(c: String): List<Command>? =
         waCall(c) ?: waSection(c) ?: draftTo(c) ?: groupMessage(c) ?: messageWithText(c) ?: webSearch(c) ?: camera(c) ?: reminder(c) ?: timer(c) ?: alarm(c) ?: flashlight(c) ?: volume(c) ?: music(c)
 
     private val WA = "(?:whats ?app|watsapp|whatsap|wa)"
+
+    // ------------------------------------------------------------ everyday English
+
+    /** Rephrasings that mean the same as a form the rules already know. */
+    private fun englishRewrite(c: String): String = c
+        .replace(rx("^send (?:a |an )?$WA (message|msg|text)\\b"), "send a $1")
+        .replace(rx("^send (?:a |an )?$WA to\\b"), "send a message to")
+        .replace(rx("^(make|start|place|give) (?:a |an )?group (video |voice |audio )?call\\b"), "$1 a $2call")
+        .replace(rx("^(start|make|place) (?:a )?(video |voice |audio )?call with\\b"), "$1 a $2call to")
+        .replace(rx("\\s+"), " ").trim()
+
+    private val PRON = listOf(
+        "he's" to "you're", "she's" to "you're", "they're" to "you're", "he is" to "you are", "she is" to "you are", "they are" to "you are",
+        "he was" to "you were", "she was" to "you were", "he has" to "you have", "she has" to "you have", "he'll" to "you'll", "she'll" to "you'll",
+        "himself" to "yourself", "herself" to "yourself", "his" to "your", "him" to "you", "he" to "you", "she" to "you", "they" to "you", "them" to "you", "their" to "your",
+    )
+    private fun toSecondPerson(s: String): String {
+        var t = " $s "
+        for ((a, b) in PRON) t = t.replace(rx("(?<=\\s)${Regex.escape(a)}(?=[\\s,.?!])"), b)
+        // "her" is "you" as an object ("tell her I'm late") but "your" before a noun ("her bag"): keep it simple, "you".
+        t = t.replace(rx("(?<=\\s)her(?=[\\s,.?!])"), "you")
+        return t.trim().replace(rx("\\byou wants\\b"), "you want").replace(rx("\\byou needs\\b"), "you need").replace(rx("\\byou has\\b"), "you have").replace(rx("\\byou does\\b"), "you do")
+    }
+    private fun cap(s: String) = s.replaceFirstChar { it.uppercase() }
+
+    /** "if he's free tonight" → "Are you free tonight?" */
+    private fun asQuestion(raw: String): String {
+        var q = raw.trim().trimEnd('?', '.')
+        val yesNo = rx("^(?:if|whether) ").containsMatchIn(q)
+        q = q.replace(rx("^(?:if|whether) "), "")
+        q = toSecondPerson(q)
+        if (yesNo) {
+            rx("^you (?:are|'re) (.+)$").matchEntire(q.replace("you're", "you are"))?.let { return "Are you ${it.groupValues[1]}?" }
+            rx("^you (can|will|could|would|should|have|had|were|did|may|might) (.+)$").matchEntire(q)?.let { return "${cap(it.groupValues[1])} you ${it.groupValues[2]}?" }
+            rx("^you'll (.+)$").matchEntire(q)?.let { return "Will you ${it.groupValues[1]}?" }
+            rx("^you (\\w+?)(?:s|es)? (.+)$").matchEntire(q)?.let { return "Do you ${it.groupValues[1]} ${it.groupValues[2]}?" }
+            return cap(q) + "?"
+        }
+        // "when he's coming" → "When are you coming?"
+        rx("^(when|where|what|why|how|who|which)(.*?) you (?:are|'re) (.+)$").matchEntire(q.replace("you're", "you are"))?.let { return "${cap(it.groupValues[1])}${it.groupValues[2]} are you ${it.groupValues[3]}?" }
+        return cap(q) + "?"
+    }
+
+    /** Messages and media in plain English. */
+    private fun english(c: String): List<Command>? {
+        val who = "(.+?)"
+        relay(c)?.let { return listOf(it) }
+        // Tell Rahul (that) he should bring his laptop: the message is to them, so "he/his" becomes "you/your".
+        rx("^tell (?!me\\b|chat ?gpt|claude|gemini)$who (?:that )(.+)$").matchEntire(c)?.let { m -> return listOf(Command.SendMessage(contactRef(stripArticles(m.groupValues[1])), toSecondPerson(m.groupValues[2]), null)) }
+        rx("^tell (.+)$").matchEntire(c)?.let { m ->
+            val words = m.groupValues[1].split(' ')
+            for (n in minOf(3, words.size - 1) downTo 1) {
+                val name = words.take(n).joinToString(" ")
+                if (knownContact(name)) return listOf(Command.SendMessage(name, toSecondPerson(words.drop(n).joinToString(" ")), null))
+            }
+        }
+        // Write a message to Rahul saying hi but don't send
+        rx("^(?:write|type|draft|prepare) (?:a |an )?(?:message|msg|text|whatsapp) (?:to|for) $who (?:saying|that says|that|:) (.+?),? (?:but )?(?:don'?t|do not) send(?: it)?$").matchEntire(c)?.let { m ->
+            return listOf(Command.SendMessage(contactRef(stripArticles(m.groupValues[1])), clean(m.groupValues[2]), null, send = false))
+        }
+        // Let Rahul know (that) I'll call him later
+        rx("^let $who know(?: that)?,? (.+)$").matchEntire(c)?.let { m -> return listOf(Command.SendMessage(contactRef(stripArticles(m.groupValues[1])), toSecondPerson(m.groupValues[2]), null)) }
+        // Ask Rahul if he's coming tomorrow (only for real contacts: "ask google…" is something else)
+        rx("^ask $who (if|whether|when|where|what|why|how|who) (.+)$").matchEntire(c)?.let { m ->
+            val name = stripArticles(m.groupValues[1])
+            if (knownContact(name) || rx("\\bgroup$").containsMatchIn(name)) return listOf(Command.SendMessage(contactRef(name), asQuestion("${m.groupValues[2]} ${m.groupValues[3]}"), null))
+        }
+        // Tell the family group I'll be late / send a message in the family group saying …
+        rx("^tell (?:the |my |our )?(.+? group)(?: that)?,? (.+)$").matchEntire(c)?.let { m -> return listOf(Command.SendMessage(m.groupValues[1], toSecondPerson(m.groupValues[2]), null)) }
+        rx("^send (?:a |an )?(?:message|msg|text) (?:in|to|on) (?:the |my |our )?(.+? group) (?:saying|that says|that|:) (.+)$").matchEntire(c)?.let { m -> return listOf(Command.SendMessage(m.groupValues[1], clean(m.groupValues[2]), null)) }
+        // Open Rahul's WhatsApp
+        rx("^(?:open|show|go to) (.+?)'?s $WA(?: chat)?$").matchEntire(c)?.let { m -> if (!isKnownApp(m.groupValues[1])) return listOf(Command.OpenChat(m.groupValues[1].trim(), "whatsapp")) }
+        if (rx("^(?:do i have|are there|any|i have|got)(?: any)? (?:new |unread )?(?:messages|texts|whatsapp messages|whatsapps)\\??$|^(?:check|read) (?:my )?(?:new |unread )?(?:messages|whatsapp messages|whatsapps)$").matches(c)) return listOf(Command.ReadMessages(null))
+        // Calls: give mom a (video) call
+        rx("^give $who an? (video |voice |audio |whatsapp )?call(?: on $WA)?$").matchEntire(c)?.let { m ->
+            val kind = m.groupValues[2].trim().lowercase(); val wa = kind.isNotEmpty() || rx("on $WA$").containsMatchIn(c)
+            return listOf(Command.Call(contactRef(stripArticles(m.groupValues[1])), app = if (wa) "whatsapp" else null, video = kind == "video"))
+        }
+        // Media
+        val yt = "(youtube music|yt music|youtube|yt)"
+        fun appOf(w: String) = if (w.lowercase().contains("music")) "youtube music" else "youtube"
+        rx("^search $yt for (.+)$").matchEntire(c)?.let { return listOf(Command.Search(videoQuery(it.groupValues[2]), appOf(it.groupValues[1]))) }
+        rx("^(?:show me|find me|find|get me|look for|look up) (.+?) on $yt$").matchEntire(c)?.let { return listOf(Command.Search(videoQuery(it.groupValues[1]), appOf(it.groupValues[2]))) }
+        rx("^watch (.+?)(?: on $yt)?$").matchEntire(c)?.let { m ->
+            var q = m.groupValues[1].trim()
+            rx("^(?:the )?(latest|newest|new|last|most recent) (?:video|upload) (?:from|by|of) (.+)$").matchEntire(q)?.let { q = "${it.groupValues[2]} latest video" }
+            if (!rx("^(?:it|this|that|the video|this video|reels?|shorts|me|me do it|me once|what i do|how i do it)\\b").containsMatchIn(q) && !isPosition(q)) return listOf(Command.PlayMedia(videoQuery(q), "youtube"))
+        }
+        rx("^(?:put on|play me|throw on|blast)(?: some| a| the)? (.+?)(?: on $yt)?$").matchEntire(c)?.let { m -> return listOf(Command.PlayMedia(songQuery(m.groupValues[1]), m.groupValues[2].takeIf { it.isNotBlank() }?.let(::appOf))) }
+        rx("^play (?:the song|the track|the video|song|track) (.+?)(?: on $yt)?$").matchEntire(c)?.let { m -> return listOf(Command.PlayMedia(m.groupValues[1].trim(), m.groupValues[2].takeIf { it.isNotBlank() }?.let(::appOf))) }
+        if (rx("^(?:go back to |play |go to )?(?:the )?(?:previous|last|prior) (?:song|track)$|^(?:previous|last) one$").matches(c)) return listOf(Command.Media(ai.nexus.core.device.MediaKey.PREVIOUS))
+        if (rx("^(?:play |go to |skip to )?(?:the )?next (?:song|track)$|^skip(?: this)?(?: song| track)?$").matches(c)) return listOf(Command.Media(ai.nexus.core.device.MediaKey.NEXT))
+        if (rx("^(?:like|heart|love) (?:this|the|that) (?:song|track|music)$").matches(c)) return listOf(Command.React(Reaction.LIKE))
+        // Search on the web
+        rx("^(?:look up|lookup|search the web for|search online for|search the internet for)(?: for)? (.+?)$").matchEntire(c)?.let { m ->
+            val q = m.groupValues[1]
+            if (!rx(" (?:on|in|using) (?:$yt|$WEB)$").containsMatchIn(q) && !isKnownApp(q)) return listOf(Command.Search(clean(q)!!, "web"))
+        }
+        rx("^what'?s on google (?:for|about) (.+)$").matchEntire(c)?.let { return listOf(Command.Search(it.groupValues[1].trim(), "web")) }
+        // Timers and alarms
+        rx("^(?:set|start|put on|run)(?: a| an| the)? $N[- ]$UNIT (?:timer|countdown)$").matchEntire(c)?.let { return seconds(it.groupValues[1], it.groupValues[2])?.let { s -> listOf(Command.SetTimer(s)) } }
+        rx("^(?:set |start )?(?:a |an )?(?:timer|countdown) (?:for )?(?:an? |one )?(hour|minute) and a half$").matchEntire(c)?.let { return listOf(Command.SetTimer(if (it.groupValues[1] == "hour") 5400 else 90)) }
+        rx("^(?:set |start )?(?:a |an )?(?:timer|countdown) (?:for )?half an hour$").matchEntire(c)?.let { return listOf(Command.SetTimer(1800)) }
+        rx("^(?:set |put )?(?:an? )?alarm (?:in|for) $N $UNIT(?: from now)?$").matchEntire(c)?.let { return seconds(it.groupValues[1], it.groupValues[2])?.let { s -> listOf(Command.SetTimer(s, "Alarm")) } }
+        rx("^(?:set|create|add)(?: a| an| the)? reminder (?:for |at )(.+?) to (.+)$").matchEntire(c)?.let { m -> clockOf(m.groupValues[1])?.let { k -> return listOf(Command.SetAlarm(k.hour, k.minute, clean(m.groupValues[2]), k.exact)) } }
+        rx("^(?:set|create|add)(?: a| an| the)? reminder (?:to |for )(.+?) (?:at|for) (.+)$").matchEntire(c)?.let { m -> clockOf(m.groupValues[2])?.let { k -> return listOf(Command.SetAlarm(k.hour, k.minute, clean(m.groupValues[1]), k.exact)) } }
+        rx("^remind me (?:tomorrow |today |tonight )?(?:at|by) (.+?) (?:to|about) (.+)$").matchEntire(c)?.let { m -> clockOf(m.groupValues[1])?.let { k -> return listOf(Command.SetAlarm(k.hour, k.minute, clean(m.groupValues[2]), k.exact)) } }
+        rx("^(?:set |put |create )?(?:an? |the )?alarm (?:for |at )(.+?)$").matchEntire(c)?.let { m -> clockOf(m.groupValues[1])?.let { k -> return listOf(Command.SetAlarm(k.hour, k.minute, null, k.exact)) } }
+        // Volume
+        rx("^turn (?:the )?(?:volume|sound|music) (up|down)$|^turn (up|down) (?:the )?(?:volume|sound|music)$").matchEntire(c)?.let { val up = (it.groupValues[1] + it.groupValues[2]).lowercase() == "up"; return listOf(Command.SetLevel(Level.VOLUME, null, if (up) 15 else -15)) }
+        if (rx("^(?:make it |a bit |a little )?(?:louder|a bit louder|a little louder)(?: please)?$|^(?:i can'?t hear(?: it)?|raise the volume|volume higher)$").matches(c)) return listOf(Command.SetLevel(Level.VOLUME, null, 15))
+        if (rx("^(?:make it |a bit |a little )?(?:quieter|softer|a bit quieter|a little quieter|less loud)$|^(?:too loud|it'?s too loud|volume lower)$").matches(c)) return listOf(Command.SetLevel(Level.VOLUME, null, -15))
+        // Torch
+        if (rx("^(?:the )?(?:flashlight|torch|flash light)$").matches(c)) return listOf(Command.SetToggle(SystemSetting.FLASHLIGHT, null))
+        // Camera
+        if (rx("^(?:start|begin) (?:recording|filming|shooting)(?: a)?(?: video)?$|^(?:record|film|shoot) (?:a |me a )?video$").matches(c)) return listOf(Command.TakePhoto(video = true))
+        return null
+    }
+
+    private fun songQuery(q: String) = q.trim().replace(rx("^(?:some|a few|the song|a song)\\s+"), "").trim()
+    private fun videoQuery(q: String) = q.trim().replace(rx("^(?:an? |the |some )?(?:videos?|clips?) (?:about|of|on|for)\\s+"), "").trim()
 
     /** "whatsapp call rahul", "video call mom", "rahul ko whatsapp pe call karo", "call college group on whatsapp". */
     private fun waCall(c0: String): List<Command>? {
@@ -172,7 +310,7 @@ internal class FixedTasks(
 
     private val PERIOD = "subah|savere|sawere|morning|dopahar|dopehar|afternoon|shaam|sham|evening|raat|night|tonight"
     private val MOD = "saade|sade|saadhe|sava|sawa|paune|pone"
-    private val TIME_RX = rx("^(?:(?:kal|aaj|tomorrow|today)\\s+)?(?:($PERIOD)\\s+)?(?:ko\\s+)?(?:($MOD)\\s+)?(\\d{1,2}|[a-z]+)(?:[:.](\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?)?(?:\\s*(?:baje|bje|bajkar|o'?clock|bajke))?(?:\\s+($PERIOD|ko|ka|ki|ke|pe|par))?(?:\\s+(?:kal|tomorrow))?$")
+    private val TIME_RX = rx("^(?:(?:kal|aaj|tomorrow|today)\\s+)?(?:($PERIOD)\\s+)?(?:ko\\s+)?(?:($MOD)\\s+)?(\\d{1,2}|[a-z]+)(?:[:.](\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?)?(?:\\s*(?:baje|bje|bajkar|o'?clock|bajke))?(?:\\s+(?:tomorrow|today|kal|in the|at))?(?:\\s+($PERIOD|ko|ka|ki|ke|pe|par))?(?:\\s+(?:kal|tomorrow|today))?$")
 
     data class Clock(val hour: Int, val minute: Int, val exact: Boolean)
 

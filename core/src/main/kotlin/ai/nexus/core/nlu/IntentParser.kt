@@ -50,6 +50,10 @@ class IntentParser(
         fixed.askAi(TextNormalizer.stripFillers(normalized, trailing = false))?.let {
             return ParsedRequest(utterance, normalized, listOf(ParsedStep(it, normalized, 0.95)))
         }
+        // "WhatsApp Priya and tell her …" is one message, not two steps.
+        fixed.relay(TextNormalizer.stripFillers(normalized, trailing = false))?.let {
+            return ParsedRequest(utterance, normalized, listOf(ParsedStep(it, normalized, 0.95)))
+        }
 
         // Open-ended / timed: "keep scrolling up", "next reel every 15 seconds", "at 9 pm message Rahul …".
         Timing.parse(TextNormalizer.stripFillers(normalized), ::isConcrete, ::isMessageText)?.let {
@@ -124,7 +128,7 @@ class IntentParser(
     private fun isMessageText(text: String): Boolean = parse(text).steps.any { it.command is Command.SendMessage || it.command is Command.Write || it.command is Command.Email }
 
     fun parseClause(c0: String, appContext: String? = null, depth: Int = 0): List<Command> {
-        val c = if (depth == 0) casual(c0) else c0
+        val c = fixed.rewrite(if (depth == 0) casual(c0) else c0)
         controlOnly(c)?.let { return listOf(it) }
 
         // Corrections: "open the second result instead", "no, the other one"

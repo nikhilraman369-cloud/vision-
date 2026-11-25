@@ -112,3 +112,6 @@ Spec: `core/src/test/resources/category_a_corpus.txt` (217 phrases, English + Hi
 - Google search → Chrome. Timers, alarms ("7 baje" = next 7 o'clock; subah/shaam/raat; saade/sava/paune), reminders (Hindi "yaad dilana"), torch, volume, camera/selfie.
 - Devanagari English words fixed (कॉल→call, टाइमर→timer, चैट जीपीटी→chatgpt…).
 - Self-check screen (Panel → ✅ Self-check): checks every dependency, Try button per task, Copy results.
+
+## 2.12.1 — Category A in everyday English
+`category_a_english.txt`: 152 natural English phrasings, all pass. New: relayed messages ("Ask Rahul if he's coming" → "Are you coming tomorrow?", "Let Mom know…", "Tell Rahul he should bring his laptop" → "you should bring your laptop"), "WhatsApp Priya and tell her …" kept as one message, "Give Mom a video call", "Put on some lo-fi", "Watch the latest video from MKBHD", "Use/Get/Have ChatGPT to …", "Hey ChatGPT, …", "Start a 5 minute timer", "an hour and a half", "alarm in 30 minutes", "Set a reminder for 5 pm to …", "Make it louder", "Flashlight" (toggle), "Start recording a video".
