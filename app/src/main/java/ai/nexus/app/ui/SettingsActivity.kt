@@ -78,8 +78,39 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         // ---- Voice
-        val voice = card("🔊  Voice", "Pick from 20+ offline voices (British butler, female, American…).")
-        voice.addView(button("Choose a voice →") { startActivity(Intent(this, PanelActivity::class.java).putExtra("section", "voice")) }, Ui.matchWrap().apply { topMargin = dp(8) })
+        val voice = card("🔊  Voice & conversation", "NEXUS's voice and character. Online through Sarvam (same key as hearing).")
+        val P = ai.nexus.app.voice.Persona
+        val styleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val voicePick = Spinner(this)
+        val styleNote = label("", 12.5f, Ui.MUTED)
+        fun showStyle() {
+            val st = P.style(this)
+            styleRow.removeAllViews()
+            for (x in P.ALL) styleRow.addView(button(if (x.key == st.key) "✓ ${x.title}" else x.title, if (x.key == st.key) Ui.ACCENT else Ui.BG) {
+                P.setStyle(this, x.key); showStyle()
+            }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+            styleNote.text = st.blurb
+            voicePick.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, st.voices.map { it.title })
+            voicePick.setSelection(st.voices.indexOfFirst { it.id == P.voice(this, st) }.coerceAtLeast(0))
+            voicePick.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { P.setVoice(this@SettingsActivity, st, st.voices[pos].id) }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+        }
+        voice.addView(styleRow, Ui.matchWrap().apply { topMargin = dp(10) })
+        voice.addView(styleNote, Ui.matchWrap().apply { topMargin = dp(4) })
+        voice.addView(voicePick, Ui.matchWrap().apply { topMargin = dp(6) })
+        voice.addView(button("▶  Hear it") {
+            val line = if (P.style(this).key == "cute") "Hiii ${s.addressAs.ifBlank { "Boss" }}! I'm right here. What are we doing today?"
+                else "Good to hear you, ${s.addressAs.ifBlank { "Boss" }}. Everything's under control. What do you need?"
+            if (ai.nexus.app.hearing.SpeechKeys.get(this, ai.nexus.app.hearing.SpeechKeys.SARVAM) == null) Toast.makeText(this, "Save your Sarvam key below (Listening) first", Toast.LENGTH_LONG).show()
+            app.voice.speak(line)
+        }, Ui.matchWrap().apply { topMargin = dp(6) })
+        showStyle()
+        voice.toggle("Online voice (Sarvam)", P.onlineVoice(this)) { v -> P.setOnlineVoice(this, v) }
+        voice.toggle("Online conversation (Sarvam)", P.onlineTalk(this)) { v -> P.setOnlineTalk(this, v); app.refreshTalker() }
+        voice.addView(label("If the internet drops, NEXUS falls back to the downloaded voice or the phone's voice.", 12f, Ui.MUTED))
+        voice.addView(button("Offline voices →", Ui.BG) { startActivity(Intent(this, PanelActivity::class.java).putExtra("section", "voice")) }, Ui.matchWrap().apply { topMargin = dp(8) })
         voice.toggle("Speak replies", s.speakResponses) { v -> update { it.copy(speakResponses = v) } }
         voice.addView(label("Speaking speed", 13f, Ui.MUTED), Ui.matchWrap().apply { topMargin = dp(8) })
         voice.addView(SeekBar(this).apply {
@@ -116,7 +147,7 @@ class SettingsActivity : AppCompatActivity() {
             hint = if (haveKey) "Sarvam key saved (type to replace)" else "Sarvam API key (needed for Sarvam)"
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             setTextColor(Ui.TEXT); setHintTextColor(Ui.MUTED); textSize = 13f
-            setOnFocusChangeListener { _, has -> if (!has && text.isNotBlank()) ai.nexus.app.hearing.SpeechKeys.set(this@SettingsActivity, ai.nexus.app.hearing.SpeechKeys.SARVAM, text.toString()) }
+            setOnFocusChangeListener { _, has -> if (!has && text.isNotBlank()) { ai.nexus.app.hearing.SpeechKeys.set(this@SettingsActivity, ai.nexus.app.hearing.SpeechKeys.SARVAM, text.toString()); app.refreshTalker() } }
         }
         listen.addView(sarvamKey, Ui.matchWrap())
         listen.addView(Switch(this).apply {
@@ -141,7 +172,7 @@ class SettingsActivity : AppCompatActivity() {
         box.addView(button("Memory — what NEXUS knows about you", Ui.CARD) { startActivity(Intent(this, MemoryActivity::class.java)) }.apply { gravity = Gravity.CENTER }, Ui.matchWrap().apply { topMargin = dp(14) })
         box.addView(button("Save") {
             update { it.copy(name = name.text.toString().trim().ifBlank { null }, addressAs = callMe.text.toString().trim().ifBlank { "Boss" }) }
-            if (sarvamKey.text.isNotBlank()) ai.nexus.app.hearing.SpeechKeys.set(this, ai.nexus.app.hearing.SpeechKeys.SARVAM, sarvamKey.text.toString())
+            if (sarvamKey.text.isNotBlank()) { ai.nexus.app.hearing.SpeechKeys.set(this, ai.nexus.app.hearing.SpeechKeys.SARVAM, sarvamKey.text.toString()); app.refreshTalker() }
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
             finish()
         }, Ui.matchWrap().apply { topMargin = dp(10) })

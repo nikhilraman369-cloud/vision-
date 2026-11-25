@@ -104,6 +104,9 @@ class NexusApp : Application() {
         voicePacks = ai.nexus.app.voice.VoicePackManager(this, scope)
         cinematic = ai.nexus.app.voice.CinematicVoice(this, voicePacks)
         voice.cinematic = cinematic
+        voice.cloudVoice = ai.nexus.app.voice.SarvamVoice(this)
+        voice.cloudVoiceOn = { ai.nexus.app.voice.Persona.onlineVoice(this) }
+        refreshTalker()
         loadVoice()
         life.store.cleanup()
         scope.launch { refreshVocabulary() }
@@ -352,7 +355,14 @@ class NexusApp : Application() {
         prefs.edit().putBoolean("migrated23", true).apply()
     }
 
+    /** Online conversation (Sarvam) when it's on and the key is saved; otherwise the other brains answer. */
+    fun refreshTalker() {
+        val on = ai.nexus.app.voice.Persona.onlineTalk(this) && ai.nexus.app.hearing.SpeechKeys.get(this, ai.nexus.app.hearing.SpeechKeys.SARVAM) != null
+        nexus.talker = if (on) ai.nexus.app.brain.SarvamTalker(this, { memory.settings.addressAs.ifBlank { "Boss" } }, { memory.settings.name }) else null
+    }
+
     fun applySettings() {
+        refreshTalker()
         val s = memory.settings
         voice.continuous = s.continuousListening
         voice.wakeWordEnabled = s.wakeWordEnabled

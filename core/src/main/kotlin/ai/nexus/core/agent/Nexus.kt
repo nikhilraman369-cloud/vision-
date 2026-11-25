@@ -86,6 +86,8 @@ class Nexus(
         private set
     @Volatile private var teachTrigger: String? = null
 
+    /** Online conversation (questions, chat). When set, it answers before any other brain. */
+    @Volatile var talker: Talker? = null
     /** Free on-device model for rough commands (null until downloaded/loaded). */
     @Volatile var phoneBrain: PhoneBrain? = null
     /** What to say when a question needs the phone brain but it isn't ready (e.g. download progress). */
@@ -198,9 +200,10 @@ class Nexus(
             val learnPairs = ArrayList<Pair<String, List<Command>>>()
             val cloudReady = brain != null && memory.settings.useCloudAi
             // Real questions go to the conversation brain (chat); rough commands go to the translator.
-            fun isQuestion(st: ParsedStep) = st.command is Command.Chat && (cloudReady || IntentParser.isConversational(st.source))
+            val talkReady = talker != null
+            fun isQuestion(st: ParsedStep) = st.command is Command.Chat && (cloudReady || talkReady || IntentParser.isConversational(st.source))
             fun unclearStep(st: ParsedStep) = !isQuestion(st) && (st.command is Command.Agentic || st.confidence < 0.55 ||
-                (st.command is Command.Chat && !cloudReady && !OfflineChat.handles(st.source) && !Calc.looksLikeMath(st.source)))
+                (st.command is Command.Chat && !cloudReady && !talkReady && !OfflineChat.handles(st.source) && !Calc.looksLikeMath(st.source)))
             if (request.steps.any(::unclearStep)) {
                 val pb = phoneBrain?.takeIf { memory.settings.usePhoneBrain }
                 val newSteps = ArrayList<ParsedStep>()
@@ -1722,6 +1725,7 @@ class Nexus(
 
     private suspend fun chat(text: String) {
         setState(AgentState.THINKING)
+        talker?.let { t -> if (talkOnline(t, text)) return }
         val b = brain
         val reply = if (b != null && memory.settings.useCloudAi) {
             val history = ctx.conversation.toList().dropLast(1)
@@ -1758,6 +1762,30 @@ class Nexus(
             }
         }
         say(reply)
+    }
+
+    /** Online conversation, spoken sentence by sentence as it streams in. False = it failed: use the other brains. */
+    private suspend fun talkOnline(t: Talker, text: String): Boolean {
+        val history = ctx.conversation.toList().dropLast(1).takeLast(12).map { it.role to it.text }
+        val parts = kotlinx.coroutines.channels.Channel<String>(32)
+        val work = scope.async {
+            try { runCatching { t.talk(history, text, contextText()) { s -> parts.trySend(s) } } } finally { parts.close() }
+        }
+        val spoken = ArrayList<String>()
+        kotlinx.coroutines.withTimeoutOrNull(ANSWER_TIMEOUT_MS) {
+            for (sentence in parts) {
+                emit(NexusEvent.Reply(sentence, memory.settings.speakResponses, continued = spoken.isNotEmpty()))
+                spoken += sentence
+            }
+        }
+        if (spoken.isEmpty()) {
+            val err = if (work.isCompleted) work.await().exceptionOrNull() else null
+            if (err != null) emit(NexusEvent.Error("Online conversation failed: ${err.message?.take(80)}"))
+            return false
+        }
+        val full = spoken.joinToString(" ")
+        ctx.addTurn("assistant", full); memory.recordTurn("assistant", full)
+        return true
     }
 
     private suspend fun describeScreen(question: String): Outcome {

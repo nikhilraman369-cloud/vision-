@@ -114,7 +114,7 @@ class VoiceEngine(
     /** Cut off all speech and forget anything waiting to be said. */
     private fun silence() {
         neuralToken++
-        neuralQueue.clear(); cinematic?.stop(); tts?.stop()
+        neuralQueue.clear(); cinematic?.stop(); cloudVoice?.stop(); tts?.stop()
         sysOpen.clear(); sysStarted.clear(); systemSpeaking = false; neuralBusy = false
     }
 
@@ -153,6 +153,11 @@ class VoiceEngine(
 
     // ---------------- voice output: neural pack first, then the system voice (always something is tried)
     @Volatile var cinematic: CinematicVoice? = null
+    /** The online voice (Sarvam). Used first when on and the key is saved. */
+    @Volatile var cloudVoice: SarvamVoice? = null
+    @Volatile var cloudVoiceOn: () -> Boolean = { false }
+    @Volatile private var cloudVoiceFailedAt = 0L
+    private fun useCloudVoice() = cloudVoice?.ready == true && cloudVoiceOn() && System.currentTimeMillis() - cloudVoiceFailedAt > 60_000
     @Volatile var useNeural = true
     @Volatile var pitch = 0.95f
     @Volatile var effects = true
@@ -197,9 +202,10 @@ class VoiceEngine(
         if (conversation) { awaitingReply = true; windowUntil = 0 }
         pauseRecognizer()
         val c = cinematic
-        if (useNeural && c != null && c.ready && !Devanagari.containsDevanagari(text)) {
+        if (useCloudVoice() || (useNeural && c != null && c.ready && !Devanagari.containsDevanagari(text))) {
             neuralQueue.addLast(text)
             if (!neuralBusy) playNextNeural()
+            else if (neuralQueue.size == 1 && useCloudVoice()) cloudVoice?.prefetch(text, speechRate)   // fetch it while the current sentence plays
             return@post
         }
         speakSystem(text)
@@ -239,7 +245,13 @@ class VoiceEngine(
     }
 
     private fun playNextNeural() {
-        val c = cinematic ?: return
+        if (useCloudVoice()) { playNextCloud(); return }
+        val c = cinematic?.takeIf { useNeural && it.ready } ?: run {
+            // No downloaded voice: the phone's voice says whatever is queued.
+            val rest = neuralQueue.toList(); neuralQueue.clear(); neuralBusy = false
+            if (rest.isEmpty()) afterSpeaking() else rest.forEach { speakSystem(it) }
+            return
+        }
         val next = neuralQueue.removeFirstOrNull() ?: run { neuralBusy = false; afterSpeaking(); return }
         neuralBusy = true
         neuralStarted = false
@@ -252,6 +264,32 @@ class VoiceEngine(
         if (!ok) { neuralFailed(next, "the voice isn't loaded"); return }
         // The first sentence should start within a few seconds; if not, use the phone's voice.
         main.postDelayed({ if (token == neuralToken && !neuralStarted) { cinematic?.stop(); neuralFailed(next, "the voice took too long to start") } }, 10_000)
+    }
+
+    private fun playNextCloud() {
+        val cv = cloudVoice ?: return
+        val next = neuralQueue.removeFirstOrNull() ?: run { neuralBusy = false; afterSpeaking(); return }
+        neuralBusy = true
+        neuralStarted = false
+        val token = ++neuralToken
+        _state.value = VoiceState.SPEAKING
+        val ok = cv.speak(next, speechRate,
+            onStart = { main.post { if (token == neuralToken) { neuralStarted = true; _issue.value = null; _state.value = VoiceState.SPEAKING; pauseRecognizer() } } },
+            onDone = { main.post { if (token == neuralToken) playNextNeural() } },
+            onFail = { why -> main.post { if (token == neuralToken) cloudVoiceFailed(next, why) } })
+        if (!ok) { cloudVoiceFailed(next, "no Sarvam key"); return }
+        neuralQueue.firstOrNull()?.let { cv.prefetch(it, speechRate) }
+        main.postDelayed({ if (token == neuralToken && !neuralStarted) { cv.stop(); cloudVoiceFailed(next, "it took too long to start") } }, 8000)
+    }
+
+    /** The online voice made no sound: this and the queued text go to the downloaded voice or the phone's voice; retry online in a minute. */
+    private fun cloudVoiceFailed(text: String, why: String) {
+        neuralToken++
+        cloudVoiceFailedAt = System.currentTimeMillis()
+        fail("the online voice failed ($why), so I used the backup voice")
+        neuralQueue.addFirst(text)
+        neuralBusy = false
+        playNextNeural()
     }
 
     /** The neural voice made no sound: say it (and anything queued) with the phone's voice instead. */

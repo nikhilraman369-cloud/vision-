@@ -115,3 +115,10 @@ Spec: `core/src/test/resources/category_a_corpus.txt` (217 phrases, English + Hi
 
 ## 2.12.1 — Category A in everyday English
 `category_a_english.txt`: 152 natural English phrasings, all pass. New: relayed messages ("Ask Rahul if he's coming" → "Are you coming tomorrow?", "Let Mom know…", "Tell Rahul he should bring his laptop" → "you should bring your laptop"), "WhatsApp Priya and tell her …" kept as one message, "Give Mom a video call", "Put on some lo-fi", "Watch the latest video from MKBHD", "Use/Get/Have ChatGPT to …", "Hey ChatGPT, …", "Start a 5 minute timer", "an hour and a half", "alarm in 30 minutes", "Set a reminder for 5 pm to …", "Make it louder", "Flashlight" (toggle), "Start recording a video".
+
+## 2.13.0 — Category C: voice and conversation (online, Sarvam)
+- Voice: Sarvam Bulbul v4-flash, streamed (/text-to-speech/stream, raw 24 kHz PCM, plays as bytes arrive, next sentence prefetched). Two styles: **Strong** (Simran, Sanchita, Amelia, Sophia, Zarina) and **Cute** (Ritu, Ishita, Neha, Aparna, Shalini). If a v4 voice is refused → the style's v3 voice. If Sarvam fails → downloaded voice → phone voice; retry online after 60 s.
+- Conversation: Sarvam `sarvam-105b-conversations` (voice-agent model, no reasoning delay), streamed; each sentence is spoken the moment it's complete. Personality follows the style. Spoken-style rules (short, no markdown). Last 12 turns as history. Failure → other brains, never silence.
+- Settings → Voice & conversation: Strong/Cute, voice picker, ▶ Hear it, online voice / online conversation switches.
+- API shapes taken from the official `sarvamai` SDK 1.1.22 (docs site unreachable from the build sandbox); not yet tried against the live API.
+- Tests: `TalkTest` (streaming order, history, commands never go to chat, failure fallback, speakable text).

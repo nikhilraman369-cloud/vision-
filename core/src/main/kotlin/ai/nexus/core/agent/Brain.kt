@@ -46,3 +46,12 @@ interface Brain {
     /** One-shot question about the current screen ("what does this button do?"). */
     suspend fun describeScreen(question: String, screen: ScreenSnapshot, screenshot: ByteArray?, context: String): String
 }
+
+/**
+ * Online conversation partner (e.g. Sarvam). Streams its answer: [onSentence] gets each finished
+ * sentence as soon as it exists, so NEXUS starts speaking before the whole reply is written.
+ * [history] = (role, text) pairs, oldest first. Returns the full reply.
+ */
+interface Talker {
+    suspend fun talk(history: List<Pair<String, String>>, userText: String, context: String, onSentence: (String) -> Unit): String
+}
