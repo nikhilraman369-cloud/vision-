@@ -30,7 +30,11 @@ class WavRecorder(private val context: Context) {
     fun stop() { stopRequested = true }
 
     @SuppressLint("MissingPermission")
-    suspend fun record(useEarbuds: Boolean): ByteArray = withContext(Dispatchers.IO) {
+    /**
+     * Returns the recording, or an empty array if nobody spoke within [waitForSpeechMs].
+     * [endSilenceMs] of quiet after speech ends the recording; [onSpeechStart] fires when you start talking.
+     */
+    suspend fun record(useEarbuds: Boolean, waitForSpeechMs: Long = 15_000, endSilenceMs: Int = 1200, onSpeechStart: () -> Unit = {}): ByteArray = withContext(Dispatchers.IO) {
         stopRequested = false
         if (useEarbuds) routeEarbuds()
         val rate = 16000
@@ -39,13 +43,13 @@ class WavRecorder(private val context: Context) {
         val ns = if (NoiseSuppressor.isAvailable()) runCatching { NoiseSuppressor.create(rec.audioSessionId)?.apply { enabled = true } }.getOrNull() else null
         val out = ByteArrayOutputStream()
         val buf = ShortArray(rate / 20)          // 50 ms chunks
+        var heardSpeech = false
         try {
             rec.startRecording()
-            var heardSpeech = false
             var quietMs = 0
             var totalMs = 0
-            var noise = 300.0
-            while (coroutineContext.isActive && !stopRequested && totalMs < 15_000) {
+            var noise = Double.MAX_VALUE
+            while (coroutineContext.isActive && !stopRequested && totalMs < (if (heardSpeech) 30_000 else waitForSpeechMs)) {
                 val n = rec.read(buf, 0, buf.size)
                 if (n <= 0) continue
                 val bb = ByteBuffer.allocate(n * 2).order(ByteOrder.LITTLE_ENDIAN)
@@ -55,16 +59,16 @@ class WavRecorder(private val context: Context) {
                 val rms = Math.sqrt(sum / n)
                 level = (rms / 3000.0).coerceIn(0.0, 1.0).toFloat()
                 totalMs += 50
-                if (totalMs < 300) { noise = maxOf(noise, rms); continue }   // learn the background level first
-                if (rms > noise * 2.5 + 200) { heardSpeech = true; quietMs = 0 } else if (heardSpeech) quietMs += 50
-                if (heardSpeech && quietMs >= 1200) break
+                if (totalMs <= 250) { noise = minOf(noise, maxOf(rms, 150.0)); continue }   // background level = quietest of the first moments
+                if (rms > noise * 2.5 + 200) { if (!heardSpeech) { heardSpeech = true; runCatching(onSpeechStart) }; quietMs = 0 } else if (heardSpeech) quietMs += 50
+                if (heardSpeech && quietMs >= endSilenceMs) break
             }
         } finally {
             runCatching { rec.stop() }; rec.release(); runCatching { ns?.release() }
             unrouteEarbuds()
             level = 0f
         }
-        out.toByteArray()
+        if (!heardSpeech && waitForSpeechMs < 15_000) ByteArray(0) else out.toByteArray()
     }
 
     private fun routeEarbuds() {

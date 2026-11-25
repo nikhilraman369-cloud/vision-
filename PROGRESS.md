@@ -97,3 +97,8 @@ Version 2.0.0 (versionCode 7). Built on 0.6 (upgraded, not rebuilt).
 
 ## First step next session
 Install the build, run the acceptance tests in the report, then send Panel → Diagnostics → "Copy report" for anything that misbehaved.
+
+## 2.11.0 — Sarvam is NEXUS's ears
+- Hearing Test winner: Sarvam (saarika:v2.5). Tap the bubble → records via earbud mic until you stop talking (0.8 s) → Sarvam → command.
+- Settings → Listening: Hearing engine (Sarvam / phone), Sarvam key field, earbud-mic switch.
+- If Sarvam fails (no net / bad key) NEXUS says so and falls back to the phone recogniser for 60 s.

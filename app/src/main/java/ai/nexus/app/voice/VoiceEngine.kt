@@ -1,5 +1,6 @@
 package ai.nexus.app.voice
 
+import kotlinx.coroutines.launch
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -321,8 +322,47 @@ class VoiceEngine(
         return if (comp != null) SpeechRecognizer.createSpeechRecognizer(context, comp) else SpeechRecognizer.createSpeechRecognizer(context)
     }
 
+    // ---------------- cloud ears (Sarvam): record until you stop talking, then transcribe
+    /** True when the online recogniser should be used (key present and chosen in Settings). */
+    @Volatile var cloudEars: () -> Boolean = { false }
+    @Volatile var useEarbudMic: () -> Boolean = { true }
+    private val cloudScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+    private val ear by lazy { ai.nexus.app.hearing.WavRecorder(context) }
+    private val sarvam by lazy { ai.nexus.app.hearing.SarvamEngine(context) }
+    private var cloudGen = 0
+    private var cloudJob: kotlinx.coroutines.Job? = null
+
+    private fun startCloud() {
+        if (cloudJob?.isActive == true) return
+        val gen = ++cloudGen
+        val wait = (windowUntil - System.currentTimeMillis()).coerceIn(1500, 15_000)
+        cloudJob = cloudScope.launch {
+            val pcm = ear.record(useEarbudMic(), waitForSpeechMs = wait, endSilenceMs = 800) {
+                main.post { if (gen == cloudGen && windowOpen()) { _state.value = VoiceState.HEARING; windowUntil = maxOf(windowUntil, System.currentTimeMillis() + 30_000) } }
+            }
+            if (gen != cloudGen) return@launch                       // cancelled (NEXUS started talking, or you tapped stop)
+            if (pcm.isEmpty()) { windowExpired(); return@launch }      // nothing said in the window
+            awaitingReply = true; windowUntil = 0
+            _state.value = VoiceState.OFF
+            _partial.value = "…"
+            val text = runCatching {
+                kotlinx.coroutines.withTimeout(10_000) { sarvam.transcribe(ai.nexus.app.hearing.WavRecorder.wav(pcm), pcm) }
+            }.getOrElse { e -> fail("online hearing failed (${e.message?.take(80)}), so I used the phone's recogniser"); null }
+            _partial.value = ""
+            if (gen != cloudGen) return@launch
+            if (text == null) { cloudFailedAt = System.currentTimeMillis(); awaitingReply = false; windowUntil = System.currentTimeMillis() + firstWindowMs; startRecognizer(); return@launch }
+            if (text.isBlank()) { awaitingReply = false; windowExpired(); return@launch }
+            _issue.value = null
+            onUtterance(text.trim())
+        }
+    }
+    @Volatile private var cloudFailedAt = 0L
+
     private fun startRecognizer() {
-        if (!available || isSpeaking) return
+        if (isSpeaking) return
+        // Online ears unless they just failed (then the phone's recogniser for a minute).
+        if (cloudEars() && System.currentTimeMillis() - cloudFailedAt > 60_000) { startCloud(); return }
+        if (!available) return
         if (recognizer == null) {
             recognizer = createRecognizer().also { it.setRecognitionListener(listener) }
         }
@@ -331,7 +371,7 @@ class VoiceEngine(
     }
 
     /** Stops the recogniser without changing what the bubble shows. */
-    private fun pauseRecognizer() { runCatching { recognizer?.cancel() } }
+    private fun pauseRecognizer() { runCatching { recognizer?.cancel() }; cloudGen++; ear.stop() }
 
     private fun windowOpen() = conversation && !awaitingReply && System.currentTimeMillis() < windowUntil
 
@@ -391,6 +431,7 @@ class VoiceEngine(
         main.post {
             recognizer?.destroy(); recognizer = null
             tts?.shutdown(); tts = null
+            cloudGen++; ear.stop()
         }
     }
 }

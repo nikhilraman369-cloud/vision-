@@ -69,6 +69,11 @@ class NexusApp : Application() {
         nexus = Nexus(device, systemActions, memory, brain = buildBrain(), scope = scope, life = life)
         voice = VoiceEngine(this, chooseBest = ::bestGuess) { text -> ask(text) }
         voice.init()
+        voice.cloudEars = {
+            getSharedPreferences("nexus", MODE_PRIVATE).getString("ear_engine", "sarvam") == "sarvam" &&
+                ai.nexus.app.hearing.SpeechKeys.get(this, ai.nexus.app.hearing.SpeechKeys.SARVAM) != null
+        }
+        voice.useEarbudMic = { getSharedPreferences("nexus", MODE_PRIVATE).getBoolean("hearing_earbuds", true) }
         voice.agentBusy = { nexus.state.value == AgentState.THINKING || nexus.state.value == AgentState.EXECUTING }
         voice.agentWaiting = { nexus.state.value == AgentState.WAITING_FOR_USER }
         migrateTo21()

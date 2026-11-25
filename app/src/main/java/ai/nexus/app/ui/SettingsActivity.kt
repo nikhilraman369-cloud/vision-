@@ -99,6 +99,30 @@ class SettingsActivity : AppCompatActivity() {
             runCatching { startActivity(i) }.onFailure { runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)) } }
         }, Ui.matchWrap().apply { topMargin = dp(8) })
         listen.addView(label("Pick NEXUS under “Digital assistant app”. Then the phone's assistant gesture (usually a long-press of the power button) starts NEXUS. A normal power-button press still locks and wakes the screen.", 12f, Ui.MUTED), Ui.matchWrap().apply { topMargin = dp(4) })
+        // Ears: Sarvam (online, best for Hinglish) or the phone's own recogniser
+        val np = getSharedPreferences("nexus", MODE_PRIVATE)
+        val haveKey = ai.nexus.app.hearing.SpeechKeys.get(this, ai.nexus.app.hearing.SpeechKeys.SARVAM) != null
+        listen.addView(label("Hearing", 13f, Ui.MUTED), Ui.matchWrap().apply { topMargin = dp(8) })
+        val ears = listOf("sarvam" to "Sarvam AI (online, best for Hinglish)", "phone" to "Phone's recogniser")
+        listen.addView(Spinner(this).apply {
+            adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, ears.map { it.second })
+            setSelection(ears.indexOfFirst { it.first == np.getString("ear_engine", "sarvam") }.coerceAtLeast(0))
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) { np.edit().putString("ear_engine", ears[pos].first).apply() }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+        }, Ui.matchWrap())
+        val sarvamKey = EditText(this).apply {
+            hint = if (haveKey) "Sarvam key saved (type to replace)" else "Sarvam API key (needed for Sarvam)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setTextColor(Ui.TEXT); setHintTextColor(Ui.MUTED); textSize = 13f
+            setOnFocusChangeListener { _, has -> if (!has && text.isNotBlank()) ai.nexus.app.hearing.SpeechKeys.set(this@SettingsActivity, ai.nexus.app.hearing.SpeechKeys.SARVAM, text.toString()) }
+        }
+        listen.addView(sarvamKey, Ui.matchWrap())
+        listen.addView(Switch(this).apply {
+            text = "Listen through my earbuds' microphone"; isChecked = np.getBoolean("hearing_earbuds", true); setTextColor(Ui.TEXT)
+            setOnCheckedChangeListener { _, v -> np.edit().putBoolean("hearing_earbuds", v).apply() }
+        }, Ui.matchWrap())
         listen.addView(label("Language", 13f, Ui.MUTED), Ui.matchWrap().apply { topMargin = dp(8) })
         val langs = listOf("auto" to "English + Hinglish", "en" to "English only", "hi" to "Hindi (हिन्दी)")
         listen.addView(Spinner(this).apply {
@@ -117,6 +141,7 @@ class SettingsActivity : AppCompatActivity() {
         box.addView(button("Memory — what NEXUS knows about you", Ui.CARD) { startActivity(Intent(this, MemoryActivity::class.java)) }.apply { gravity = Gravity.CENTER }, Ui.matchWrap().apply { topMargin = dp(14) })
         box.addView(button("Save") {
             update { it.copy(name = name.text.toString().trim().ifBlank { null }, addressAs = callMe.text.toString().trim().ifBlank { "Boss" }) }
+            if (sarvamKey.text.isNotBlank()) ai.nexus.app.hearing.SpeechKeys.set(this, ai.nexus.app.hearing.SpeechKeys.SARVAM, sarvamKey.text.toString())
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
             finish()
         }, Ui.matchWrap().apply { topMargin = dp(10) })
