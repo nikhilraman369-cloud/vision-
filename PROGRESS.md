@@ -1,5 +1,11 @@
 # NEXUS v2 — Progress
 
+## 2.10.0 (versionCode 22): Hearing Test (step 1 of the v3 plan)
+- Panel → 🎧 Hearing Test: 30 real phrases from the task list (English + Hinglish). Each is recorded once (16 kHz, noise suppression, earbud mic optional, stops ~1.2 s after you finish) and the same recording is sent to Sarvam (saarika), Deepgram (nova-3 multi), Whisper large-v3-turbo on Groq, and the phone's own recogniser (en-IN, hi-IN; Android 13+).
+- Each result is scored on words heard (Hinglish spelling and Devanagari normalised) and on whether NEXUS would run the same command; plus speed. Copy/Share report.
+- Keys are entered in the app and stored only on the phone.
+- v3 plan: lean app with only categories A–C, built on the winning engine; intents/deep links first, screen taps only where unavoidable; full-screen persistent reminders; memory; British butler-style voice; online conversation.
+
 ## 2.9.0 (versionCode 21): playback that doesn't depend on the screen + app screen recorder
 - **YouTube and YouTube Music play directly:** NEXUS looks the video/song up (YouTube's own search API, JSON; the search page as fallback) and opens it in the app with a watch link, which starts playing from any screen, even while something else is playing. YouTube Music looks up songs (not music videos). "Play X" with no app uses YouTube Music when it's installed.
 - **Teach NEXUS an app (Panel → 🗺):** records the structure of every different screen you open (ids, buttons, lists, positions; typed text is never saved), with a "Learning screens · N saved" bar. Share file saves it to Downloads/NEXUS and opens the share sheet. These recordings are how each daily app gets taught from its real layout.

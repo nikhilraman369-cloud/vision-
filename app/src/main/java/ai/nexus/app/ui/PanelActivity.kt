@@ -153,7 +153,8 @@ class PanelActivity : AppCompatActivity() {
     }
 
     private fun open(sec: String) =
-        if (sec == "skills") startActivity(Intent(this, TeachActivity::class.java))
+        if (sec == "hearing") startActivity(Intent(this, HearingTestActivity::class.java))
+        else if (sec == "skills") startActivity(Intent(this, TeachActivity::class.java))
         else startActivity(Intent(this, PanelActivity::class.java).putExtra("section", sec))
     private fun fmtTime(ms: Long) = SimpleDateFormat("d MMM, h:mm a", Locale.ENGLISH).format(Date(ms))
 
@@ -162,7 +163,7 @@ class PanelActivity : AppCompatActivity() {
     private fun panel() {
         title("Control panel", "Everything NEXUS does, in one place.")
         listOf(
-            "appmap" to "🗺  Teach NEXUS an app (record its screens)", "tasks" to "☑  Tasks & deadlines", "skills" to "🎓  Teach NEXUS & what it learned", "modes" to "◐  Modes & routines",
+            "hearing" to "🎧  Hearing Test (which engine hears you best)", "appmap" to "🗺  Teach NEXUS an app (record its screens)", "tasks" to "☑  Tasks & deadlines", "skills" to "🎓  Teach NEXUS & what it learned", "modes" to "◐  Modes & routines",
             "notifications" to "✉  Notification rules", "voice" to "♪  Voice", "bubble" to "●  Bubble", "study" to "📚  Study & habits",
             "diagnostics" to "⚙  Diagnostics", "permissions" to "✔  Permissions", "privacy" to "🔒  Data & privacy", "general" to "☰  General",
         ).forEach { (k, t) -> box.addView(button(t, Ui.CARD) { open(k) }.apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, Ui.matchWrap().apply { topMargin = dp(6) }) }

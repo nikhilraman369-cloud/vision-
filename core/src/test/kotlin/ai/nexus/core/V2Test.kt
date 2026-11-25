@@ -315,4 +315,20 @@ class V2Test {
         assertTrue(dump.contains("#entry") && dump.contains("EDIT") && dump.contains("desc=\"Send\"") && dump.contains("TAP"), dump)
         assertTrue(!dump.contains("secret draft"), dump)
     }
+
+    @Test fun hearingTestScoresWordsAndCommands() {
+        val h = ai.nexus.core.hearing.HearingTest
+        assertEquals(100, h.accuracy("Play Skyfall on YouTube Music", "play skyfall on you tube music."))
+        assertTrue(h.accuracy("Moht ko WhatsApp pe message karo ki main das minute mein aa raha hoon", "mohit ko whatsapp pe message karo ki mai 10 minute me aa raha hu") >= 85)
+        assertTrue(h.accuracy("Volume kam karo", "वॉल्यूम कम करो") >= 60, "Devanagari is compared after transliteration")
+        assertTrue(h.sameCommand("Play Skyfall on YouTube Music", "play sky fall on youtube music"))
+        assertTrue(!h.sameCommand("Scroll down three times", "school down three times"))
+        val trials = listOf(
+            ai.nexus.core.hearing.HearingTest.Trial("Next song", "A", "next song", 300),
+            ai.nexus.core.hearing.HearingTest.Trial("Next song", "B", "next sung", 200),
+            ai.nexus.core.hearing.HearingTest.Trial("Next song", "C", null, 0, "no key"),
+        )
+        assertEquals("A", h.score(trials).first().engine)
+        assertTrue(h.report(trials, "test").contains("understood 1/1"))
+    }
 }
